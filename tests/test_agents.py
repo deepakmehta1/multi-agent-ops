@@ -110,6 +110,13 @@ async def test_agent_is_forced_to_report_when_the_budget_runs_out(agents, tools,
     assert result.iterations == settings.max_agent_iterations
     assert result.output == "partial findings"
 
+    # The step has to close on the trace too, flagged as having run out of budget.
+    # It used to emit nothing at all, so a stream showed the step start and stall.
+    completed = [e for e in bus.history if e.type is EventType.STEP_COMPLETED]
+    assert len(completed) == 1
+    assert completed[0].data["truncated"] is True
+    assert "tool budget" in (completed[0].message or "")
+
 
 async def test_upstream_findings_are_handed_to_the_next_agent():
     task = AgentTask(

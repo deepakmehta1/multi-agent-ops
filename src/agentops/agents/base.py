@@ -185,6 +185,18 @@ class Agent:
             "agent.truncated",
             extra={"run_id": ctx.run_id, "agent": self.name, "iterations": max_iterations},
         )
+        # A truncated step still completed, and anything watching the trace has to
+        # see it close -- and see that it closed early. Without this the stream
+        # shows the step starting and then nothing at all.
+        ctx.bus.emit(
+            EventType.STEP_COMPLETED,
+            agent=self.name,
+            step_id=step_id,
+            message=f"{self.title} ran out of tool budget after {max_iterations} iteration(s)",
+            tool_calls=len(records),
+            tokens=usage.total_tokens,
+            truncated=True,
+        )
         return AgentResult(
             agent=self.name,
             output=completion.text,
