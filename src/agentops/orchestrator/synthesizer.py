@@ -23,13 +23,34 @@ Rules:
 
 
 class Synthesizer:
+    """Writes the final answer from the specialists' reports.
+
+    Tracks its own `llm_calls` and `usage`, like the planner, for the run's cost report.
+    """
+
     def __init__(self, llm: LLMClient, settings: Settings) -> None:
+        """Bind the model client and settings (the orchestrator model is used)."""
         self._llm = llm
         self._settings = settings
         self.llm_calls = 0
         self.usage = Usage()
 
     async def synthesize(self, request: str, results: list[StepResult]) -> tuple[str, Usage]:
+        """Combine the step results into one answer for the person who asked.
+
+        Two shortcuts avoid a pointless model call. With no results there is nothing to
+        synthesise. With exactly one result that succeeded, the specialist's report is returned
+        verbatim: the specialist already wrote for the reader, and re-writing it can only lose
+        detail. A single FAILED result does go to the model, so the failure is explained rather
+        than returned as a raw error.
+
+        Args:
+            request: The original request.
+            results: Every step's outcome, including failed and skipped ones.
+
+        Returns:
+            The answer text and the token usage of this call (zero for the shortcuts).
+        """
         if not results:
             return ("No specialist work was carried out for this request.", Usage())
 
@@ -52,6 +73,8 @@ class Synthesizer:
                 ),
             ],
             model=self._settings.orchestrator_model,
+            # A touch above zero: the answer is prose for a person, but it must stay faithful to the
+            # reports, so not much.
             temperature=0.2,
         )
         self.llm_calls += 1
@@ -60,6 +83,12 @@ class Synthesizer:
 
 
 def _render(result: StepResult) -> str:
+    """Format one step's outcome as a block for the synthesis prompt.
+
+    Failed and skipped steps are included, clearly labelled, so the model can say what is
+    unverified instead of silently omitting it. A truncated report carries a warning that it
+    may be incomplete.
+    """
     header = f"### {result.agent} -- {result.objective}"
     if result.status is not StepStatus.SUCCEEDED:
         return f"{header}\n**{result.status.upper()}:** {result.error or 'no output'}"

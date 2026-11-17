@@ -1,3 +1,5 @@
+"""The executor: parallelism, dependency hand-off, failure cascade and timeouts."""
+
 from __future__ import annotations
 
 import asyncio
@@ -15,11 +17,18 @@ class RecordingLLM:
     """Returns a fixed answer, remembers the prompts, optionally stalls or fails."""
 
     def __init__(self, *, delay: float = 0.0, fail_for: str | None = None) -> None:
+        """Create a recording model.
+
+        Args:
+            delay: Seconds each call takes, to make overlap or queueing measurable.
+            fail_for: If set, calls whose system prompt contains this text raise `LLMError`.
+        """
         self.delay = delay
         self.fail_for = fail_for
         self.prompts: list[str] = []
 
     async def complete(self, messages, *, model, tools=None, temperature=None, json_object=False):
+        """Record the prompt, optionally fail or stall, then return a fixed report."""
         prompt = "\n".join(m.content or "" for m in messages)
         self.prompts.append(prompt)
         if self.fail_for and self.fail_for in system_prompt(messages):
@@ -34,14 +43,17 @@ class RecordingLLM:
 
 
 def _ctx(llm, tools, bus, settings) -> RunContext:
+    """Build the per-run context the executor passes to agents."""
     return RunContext(run_id="run_test", llm=llm, registry=tools, bus=bus, settings=settings)
 
 
 def _plan(*steps: PlanStep) -> Plan:
+    """Build a plan from steps."""
     return Plan(reasoning="t", steps=list(steps))
 
 
 async def test_independent_steps_run_concurrently(agents, tools, bus, settings):
+    """Three independent 50 ms steps overlap: they all start before any finishes."""
     llm = RecordingLLM(delay=0.05)
     plan = _plan(
         PlanStep(id="s1", agent="code_reviewer", objective="Review PR 482."),
@@ -63,6 +75,7 @@ async def test_independent_steps_run_concurrently(agents, tools, bus, settings):
 
 
 async def test_parallelism_is_capped(agents, tools, bus, settings):
+    """With `max_parallel_steps=1`, steps run one after another instead of together."""
     llm = RecordingLLM(delay=0.05)
     capped = settings.model_copy(update={"max_parallel_steps": 1})
     plan = _plan(
@@ -78,6 +91,7 @@ async def test_parallelism_is_capped(agents, tools, bus, settings):
 
 
 async def test_a_dependent_step_receives_the_upstream_output(agents, tools, bus, settings):
+    """A step's prompt contains the report of the step it depends on."""
     llm = RecordingLLM()
     plan = _plan(
         PlanStep(id="s1", agent="incident_responder", objective="Investigate INC-204."),
@@ -93,6 +107,7 @@ async def test_a_dependent_step_receives_the_upstream_output(agents, tools, bus,
 
 
 async def test_a_failed_step_skips_everything_downstream(agents, tools, bus, settings):
+    """A failed step skips its dependants, while an unrelated step still succeeds."""
     llm = RecordingLLM(fail_for="Site Reliability Engineer")
     plan = _plan(
         PlanStep(id="s1", agent="incident_responder", objective="Investigate."),
@@ -116,6 +131,7 @@ async def test_a_failed_step_skips_everything_downstream(agents, tools, bus, set
 
 
 async def test_a_slow_step_hits_the_timeout_without_killing_the_run(agents, tools, bus, settings):
+    """A step exceeding its timeout fails with a clear message; it does not hang the run."""
     impatient = settings.model_copy(update={"step_timeout_seconds": 0.05})
     llm = RecordingLLM(delay=0.5)
     plan = _plan(PlanStep(id="s1", agent="code_reviewer", objective="Review PR 482."))
@@ -129,6 +145,7 @@ async def test_a_slow_step_hits_the_timeout_without_killing_the_run(agents, tool
 
 
 async def test_a_follow_up_plan_can_depend_on_an_earlier_round(agents, tools, bus, settings):
+    """A second-round step can depend on a first-round step passed in as `prior`."""
     llm = RecordingLLM()
     executor = Executor(agents, settings)
     first = await executor.execute(

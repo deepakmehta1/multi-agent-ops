@@ -1,13 +1,20 @@
 services:
   api:
+    # Build the image from the Dockerfile in this directory.
     build: .
     image: multi-agent-ops:local
+    # host:container. The API and the console are both served on this one port.
     ports:
       - "8000:8000"
     environment:
+      # Read from your shell, or from a `.env` file next to this one (Compose uses it for
+      # substitution). Left empty, callers must send their own key in `X-OpenAI-Key`. Never put a
+      # real key in this file.
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       ORCHESTRATOR_MODEL: ${ORCHESTRATOR_MODEL:-gpt-4.1}
       AGENT_MODEL: ${AGENT_MODEL:-gpt-4.1-mini}
+      # Shows up in /healthz, which helps tell deployments apart.
       ENVIRONMENT: docker
       LOG_FORMAT: json
+    # Come back after a crash or a Docker restart, but not after you stop it yourself.
     restart: unless-stopped

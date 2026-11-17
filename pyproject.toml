@@ -6,6 +6,7 @@ build-backend = "hatchling.build"
 name = "multi-agent-ops"
 version = "0.1.0"
 description = "A multi-agent delivery-ops system: an orchestrator agent that plans work and delegates it to specialist agents."
+# hatchling reads this file at build time, so it must exist (the Dockerfile copies it too).
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
@@ -33,13 +34,18 @@ dev = [
 [project.scripts]
 agentops = "agentops.cli:main"
 
+# Build only the package. Hatch includes non-Python files inside it, which is how the console (ui/)
+# and the seed data (systems/data/) ship in the wheel.
 [tool.hatch.build.targets.wheel]
 packages = ["src/agentops"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Async tests and fixtures need no decorator.
 asyncio_mode = "auto"
+# A fresh event loop per test, so one test's tasks can never leak into the next.
 asyncio_default_fixture_loop_scope = "function"
+# Quiet by default. Pass `-o addopts=""` to see pytest's full summary line.
 addopts = "-q"
 
 [tool.ruff]
@@ -49,6 +55,8 @@ src = ["src", "tests"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "ASYNC", "C4", "SIM", "RUF"]
+# B008 flags function calls in default arguments, which is exactly how FastAPI declares dependencies
+# (`Depends(...)`, `Query(...)`).
 ignore = ["B008"]
 
 [tool.mypy]
@@ -57,5 +65,6 @@ packages = ["agentops"]
 mypy_path = "src"
 strict = false
 warn_unused_ignores = true
+# Every function must be annotated, though mypy is otherwise lenient (`strict = false`).
 disallow_untyped_defs = true
 ignore_missing_imports = true

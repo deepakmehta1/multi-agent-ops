@@ -17,6 +17,8 @@ from agentops.runtime.events import TraceEvent
 
 
 class RunRequest(BaseModel):
+    """Body of `POST /v1/requests` and `/v1/requests/stream`."""
+
     request: str = Field(
         min_length=3,
         max_length=8000,
@@ -30,6 +32,11 @@ class RunRequest(BaseModel):
 
 
 class StepView(BaseModel):
+    """One specialist's work in a response: what it was asked, how it went and what it said.
+
+    A flattened, client-friendly form of the internal `StepResult`.
+    """
+
     step_id: str
     agent: str
     objective: str
@@ -43,6 +50,7 @@ class StepView(BaseModel):
 
     @classmethod
     def from_result(cls, result: StepResult) -> StepView:
+        """Convert an internal `StepResult`, keeping only the tool names called."""
         return cls(
             step_id=result.step_id,
             agent=result.agent,
@@ -58,6 +66,11 @@ class StepView(BaseModel):
 
 
 class RunResponse(BaseModel):
+    """What a run returns: the answer, how it was produced, and what it cost.
+
+    `trace` is only populated when asked for (`include_trace`), since it can be long.
+    """
+
     run_id: str
     request: str
     status: RunStatus
@@ -72,6 +85,12 @@ class RunResponse(BaseModel):
 
     @classmethod
     def from_run(cls, run: RunResult, *, include_trace: bool = False) -> RunResponse:
+        """Convert an internal `RunResult` into the API shape.
+
+        Args:
+            run: The finished run.
+            include_trace: Attach the full event trace.
+        """
         return cls(
             run_id=run.run_id,
             request=run.request,
@@ -88,6 +107,8 @@ class RunResponse(BaseModel):
 
 
 class AgentView(BaseModel):
+    """One specialist on the roster, as served by `GET /v1/agents`."""
+
     name: str
     title: str
     mandate: str
@@ -95,11 +116,15 @@ class AgentView(BaseModel):
 
 
 class AgentsResponse(BaseModel):
+    """The orchestrator's description plus every specialist."""
+
     orchestrator: dict[str, Any]
     agents: list[AgentView]
 
 
 class ToolView(BaseModel):
+    """One tool: its schema and the agents permitted to call it."""
+
     name: str
     description: str
     parameters: dict[str, Any]
@@ -107,12 +132,16 @@ class ToolView(BaseModel):
 
 
 class HealthResponse(BaseModel):
+    """Liveness probe body."""
+
     status: str
     environment: str
     version: str
 
 
 class ReadinessResponse(BaseModel):
+    """Readiness probe body. `llm_credentials` is "server-key" or "caller-supplied"."""
+
     status: str
     llm_credentials: str
     agents: int
@@ -120,6 +149,8 @@ class ReadinessResponse(BaseModel):
 
 
 class ErrorResponse(BaseModel):
+    """The uniform error body documented in OpenAPI for non-2xx responses."""
+
     error: str
     code: str
     details: dict[str, Any] = Field(default_factory=dict)

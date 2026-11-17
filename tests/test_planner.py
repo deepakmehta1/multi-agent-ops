@@ -1,3 +1,5 @@
+"""The planner: plan shape, validation and the single repair attempt."""
+
 from __future__ import annotations
 
 import json
@@ -12,6 +14,7 @@ from helpers import direct_reply, is_first_plan, plan_reply, step
 
 
 async def test_independent_work_is_planned_without_dependencies(agents, settings, bus):
+    """Independent steps come back with no dependencies, and plan.created is emitted."""
     llm = ScriptedLLM()
     llm.when(
         is_first_plan,
@@ -28,6 +31,7 @@ async def test_independent_work_is_planned_without_dependencies(agents, settings
 
 
 async def test_a_dependency_is_preserved(agents, settings, bus):
+    """A dependency the model declares survives into the plan."""
     llm = ScriptedLLM()
     llm.when(
         is_first_plan,
@@ -41,6 +45,7 @@ async def test_a_dependency_is_preserved(agents, settings, bus):
 
 
 async def test_a_simple_question_is_answered_without_delegating(agents, settings, bus):
+    """A direct answer yields a plan with no steps that reports `is_direct`."""
     llm = ScriptedLLM()
     llm.when(is_first_plan, direct_reply("The release train runs Thursdays at 14:00 UTC."))
     plan = await Planner(llm, agents, settings).plan("When does the release train run?", bus)
@@ -51,6 +56,7 @@ async def test_a_simple_question_is_answered_without_delegating(agents, settings
 
 
 async def test_an_unknown_agent_is_rejected_and_repaired(agents, settings, bus):
+    """A plan naming a non-existent agent is rejected, then fixed on the one repair attempt."""
     llm = ScriptedLLM()
     llm.when(is_first_plan, plan_reply(step("s1", "security_auditor", "Audit the code.")))
     llm.when(
@@ -65,6 +71,7 @@ async def test_an_unknown_agent_is_rejected_and_repaired(agents, settings, bus):
 
 
 async def test_a_plan_that_stays_invalid_fails_the_run(agents, settings, bus):
+    """If the repair is also invalid, planning raises rather than looping."""
     llm = ScriptedLLM()
     llm.when(
         lambda _m, tool_specs: not tool_specs,
@@ -76,6 +83,7 @@ async def test_a_plan_that_stays_invalid_fails_the_run(agents, settings, bus):
 
 
 async def test_a_dependency_cycle_is_rejected(agents, settings, bus):
+    """Two steps that depend on each other are rejected."""
     llm = ScriptedLLM()
     llm.when(
         lambda _m, tool_specs: not tool_specs,
@@ -90,6 +98,7 @@ async def test_a_dependency_cycle_is_rejected(agents, settings, bus):
 
 
 async def test_a_dangling_dependency_is_rejected(agents, settings, bus):
+    """A dependency on a step that does not exist is rejected."""
     llm = ScriptedLLM()
     llm.when(
         lambda _m, tool_specs: not tool_specs,
@@ -101,6 +110,7 @@ async def test_a_dangling_dependency_is_rejected(agents, settings, bus):
 
 
 async def test_the_step_budget_is_enforced(agents, settings, bus):
+    """A plan over `max_plan_steps` is rejected, whatever the model intended."""
     llm = ScriptedLLM()
     too_many = [
         step(f"s{i}", "code_reviewer", f"Review {i}.") for i in range(settings.max_plan_steps + 1)
@@ -111,6 +121,14 @@ async def test_the_step_budget_is_enforced(agents, settings, bus):
 
 
 async def test_malformed_json_is_rejected(agents, settings, bus):
+    """A planner reply that is not JSON never reaches the executor.
+
+    Note what this really proves: with `json_object=True` the scripted fake parses its own
+    fixture and raises before the planner sees anything, so this tests the fake's guard, not
+    the planner's `_parse`. The planner's own invalid-JSON, non-object and schema-mismatch
+    branches, plus its empty-plan, duplicate-id, empty-objective and self-dependency checks,
+    have no test yet.
+    """
     llm = ScriptedLLM()
     llm.when(lambda _m, tool_specs: not tool_specs, Reply(content="not json at all"), sticky=True)
     # json_object=True makes the fake assert on its own fixture, which is the point:
@@ -120,6 +138,7 @@ async def test_malformed_json_is_rejected(agents, settings, bus):
 
 
 async def test_replanning_may_return_no_further_work(agents, settings, bus):
+    """A review that finds nothing missing returns no steps and emits no plan.revised."""
     llm = ScriptedLLM()
     llm.when(is_first_plan, plan_reply(step("s1", "code_reviewer", "Review PR 482.")))
     llm.when(

@@ -1,3 +1,5 @@
+"""The model interface, its OpenAI implementation and a scripted fake for tests."""
+
 from agentops.llm.base import (
     Completion,
     LLMClient,

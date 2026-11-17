@@ -25,7 +25,11 @@
     </nav>
   </header>
 
+  <!-- Static shell. All dynamic content is filled in by app.js, which escapes every value that
+       came from a model or tool. Elements marked `hidden` are shown and hidden by that script.
+  -->
   <main class="layout">
+    <!-- Left column: ask a question, see who is on the team, reopen a previous run. -->
     <aside class="side">
       <section class="card">
         <h2>Ask the team</h2>
@@ -33,6 +37,9 @@
           <label class="sr-only" for="request">Request</label>
           <textarea id="request" rows="5" maxlength="8000"
             placeholder="Describe what you need, in plain language&hellip;"></textarea>
+          <!-- Shown only when the server has no OpenAI key of its own; the value is kept in
+               memory and sent as the X-OpenAI-Key header.
+          -->
           <div id="keyrow" class="keyrow" hidden>
             <label for="apikey">OpenAI API key</label>
             <input id="apikey" type="password" autocomplete="off" spellcheck="false" placeholder="sk-…">
@@ -59,7 +66,9 @@
       </section>
     </aside>
 
+    <!-- Right column: the live view of one run. `aria-live` lets screen readers hear it update. -->
     <section class="stage" aria-live="polite">
+      <!-- Shown until the first run starts. -->
       <div id="empty" class="empty card">
         <h2>Watch a team of agents work</h2>
         <p>Ask a question on the left. The <strong>Delivery Lead</strong> decides which specialists to involve,
@@ -71,6 +80,7 @@
         </ul>
       </div>
 
+      <!-- One run: header, plan graph, timeline, answer and the raw trace. -->
       <div id="run-view" hidden>
         <section class="card run-head">
           <div class="run-top">
@@ -110,6 +120,7 @@
     </section>
   </main>
 
+  <!-- No framework and no build step: one plain script, same origin, nothing from a CDN. -->
   <script src="app.js"></script>
 </body>
 </html>

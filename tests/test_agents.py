@@ -1,3 +1,5 @@
+"""The specialist agent loop: tool calls, mandate enforcement, budget and tracing."""
+
 from __future__ import annotations
 
 from agentops.agents.base import AgentTask, RunContext
@@ -7,10 +9,12 @@ from helpers import after_tool_result, agent_turn
 
 
 def _ctx(llm, tools, bus, settings) -> RunContext:
+    """Build the per-run context an agent needs."""
     return RunContext(run_id="run_test", llm=llm, registry=tools, bus=bus, settings=settings)
 
 
 async def test_agent_calls_tools_then_reports(agents, tools, bus, settings):
+    """The basic loop: call a tool, read its result, then return the report in two turns."""
     llm = ScriptedLLM()
     llm.when(
         agent_turn("code_reviewer"),
@@ -37,6 +41,7 @@ async def test_agent_calls_tools_then_reports(agents, tools, bus, settings):
 
 
 async def test_agent_calls_independent_tools_in_one_turn(agents, tools, bus, settings):
+    """Several tools requested in one turn are all executed and recorded."""
     llm = ScriptedLLM()
     llm.when(
         agent_turn("test_engineer"),
@@ -87,6 +92,7 @@ async def test_agent_cannot_reach_a_tool_outside_its_mandate(agents, tools, bus,
 
 
 async def test_agent_is_forced_to_report_when_the_budget_runs_out(agents, tools, bus, settings):
+    """An agent that never stops calling tools is cut off and made to report, flagged truncated."""
     llm = ScriptedLLM()
     # Always asks for another tool, so the loop can only end by exhausting the budget.
     llm.when(
@@ -119,6 +125,7 @@ async def test_agent_is_forced_to_report_when_the_budget_runs_out(agents, tools,
 
 
 async def test_upstream_findings_are_handed_to_the_next_agent():
+    """A task renders upstream reports into the prompt, with the instruction not to redo them."""
     task = AgentTask(
         objective="Draft the notes.",
         request="Can we ship?",
@@ -131,6 +138,7 @@ async def test_upstream_findings_are_handed_to_the_next_agent():
 
 
 async def test_every_tool_call_is_traced(agents, tools, bus, settings):
+    """Each tool call emits called/result events, all stamped with the step id."""
     llm = ScriptedLLM()
     llm.when(agent_turn("code_reviewer"), Reply(tool_calls=[("list_pull_requests", {})]))
     llm.when(

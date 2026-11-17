@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -42,15 +42,27 @@ each tool call as it happens.
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
+    """Build the FastAPI app: logging, shared state, middleware, routes and the console.
+
+    A factory rather than a module-level constant so tests can build isolated apps with
+    their own settings. The module also exposes a ready-made `app` for uvicorn.
+
+    Args:
+        settings: Override the environment-derived settings (used by tests).
+    """
     settings = settings or get_settings()
+    # Done here, at import time, so uvicorn's own loggers are already routed through our formatter
+    # before it starts logging.
     configure_logging(settings.log_level, settings.log_format)
 
     @asynccontextmanager
-    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+        """Build the shared, long-lived objects at startup and release the clients at shutdown."""
         app.state.settings = settings
         app.state.agents = AgentRegistry()
         app.state.tools = build_registry()
         app.state.runs = InMemoryRunStore(max_size=settings.run_history_size)
+        # Per-key OpenAI clients; filled lazily by `get_llm_client` and closed at shutdown.
         app.state.llm_cache = {}
         log.info(
             "service.started",
@@ -64,6 +76,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             },
         )
         yield
+        # Shutdown: close every cached HTTP client cleanly.
         for client in app.state.llm_cache.values():
             await client.aclose()
         log.info("service.stopped")
@@ -80,6 +93,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
+        # No cookies or auth here, so a permissive origin list is safe by default (see
+        # `cors_origins`).
         allow_credentials=False,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -89,6 +104,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def correlation_id(
         request: Request, call_next: Callable[[Request], Awaitable[Response]]
     ) -> Response:
+        """Give every request an id, honouring one supplied by the caller, and echo it back."""
+        # Honour an id from an upstream proxy so one request can be traced across services.
         request_id = request.headers.get("X-Request-ID") or uuid.uuid4().hex[:12]
         response = await call_next(request)
         response.headers["X-Request-ID"] = request_id
@@ -102,8 +119,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # The console: a static page that talks to the API above. No build step, no CDN.
     @app.get("/", include_in_schema=False)
     async def root() -> RedirectResponse:
+        """Send browsers hitting `/` to the console."""
         return RedirectResponse(url="/ui/")
 
+    # `html=True` serves index.html for `/ui/`. Mounted last so it never shadows an API route.
     app.mount("/ui", StaticFiles(directory=UI_DIR, html=True), name="ui")
     return app
 

@@ -36,7 +36,15 @@ _PLAN_SCHEMA = """{
 
 
 class Planner:
+    """The Delivery Lead's planning brain: decide who does what, and whether more is needed.
+
+    It makes two kinds of call, both returning a validated `Plan`: `plan` for a fresh
+    request, and `replan` after results are in. It tracks its own `llm_calls` and `usage`
+    so the orchestrator can report the full cost of a run, planning included.
+    """
+
     def __init__(self, llm: LLMClient, agents: AgentRegistry, settings: Settings) -> None:
+        """Create a planner over a model client, the agent roster and the settings."""
         self._llm = llm
         self._agents = agents
         self._settings = settings
@@ -48,6 +56,13 @@ class Planner:
     # -- prompts -----------------------------------------------------------
 
     def _system_prompt(self) -> str:
+        """The Delivery Lead's standing instructions, with the live roster embedded.
+
+        The delegation rules here do real work. "Empty `depends_on` is the default" is what makes
+        the model fan out instead of chaining everything; "name the PR/service in every
+        objective" exists because an agent sees only its own objective plus its upstream outputs,
+        never the other steps.
+        """
         return f"""You are the Delivery Lead at Northwind Payments. Engineers bring you requests
 and you decide who does the work. You do not do the work yourself.
 
@@ -82,6 +97,14 @@ Reply with JSON only, in exactly this shape:
     # -- planning ----------------------------------------------------------
 
     async def plan(self, request: str, bus: EventBus) -> Plan:
+        """Turn a request into a validated plan, or a direct answer when no specialist is needed.
+
+        Emits `plan.created`. May use one extra model call to repair an invalid plan.
+
+        Raises:
+            PlanValidationError: The model produced an invalid plan twice in a row.
+            LLMError: The model provider failed.
+        """
         messages = [
             Message(role="system", content=self._system_prompt()),
             Message(role="user", content=f"Request from the team:\n\n{request}"),
@@ -139,6 +162,20 @@ Reply with JSON only, in exactly this shape:
     async def _plan_with_repair(
         self, messages: list[Message], existing_ids: set[str] | None = None
     ) -> Plan:
+        """Ask for a plan and, if it is invalid, give the model exactly one chance to fix it.
+
+        On an invalid plan the conversation is extended with the model's own reply plus the
+        validation error, so the second attempt knows precisely what was wrong. Two attempts
+        is a deliberate cap: one repair fixes the usual slip (a bad agent name, a missing
+        dependency); a model that fails twice is unlikely to succeed on a third try, and each
+        try costs a call.
+
+        Args:
+            messages: The planning conversation so far.
+            existing_ids: Step ids already used in earlier rounds (empty for a first plan). They
+                may be depended on but not reused.
+        """
+        # Temperature 0 and JSON mode below: planning should be repeatable and machine-readable.
         for attempt in (1, 2):
             completion = await self._llm.complete(
                 messages,
@@ -167,9 +204,15 @@ Reply with JSON only, in exactly this shape:
                         ),
                     ),
                 ]
+        # Unreachable: attempt 2 either returns or re-raises. Kept so the function provably returns.
         raise PlanValidationError("Planner did not produce a valid plan.")  # pragma: no cover
 
     def _parse(self, text: str) -> Plan:
+        """Parse the model's text into a `Plan`; any failure becomes a `PlanValidationError`.
+
+        Three distinct failures get distinct messages, because the message is shown to the model
+        on the repair attempt: not JSON, JSON that is not an object, and JSON of the wrong shape.
+        """
         try:
             payload = json.loads(text or "{}")
         except json.JSONDecodeError as exc:
@@ -182,9 +225,23 @@ Reply with JSON only, in exactly this shape:
             raise PlanValidationError(f"Plan did not match the schema: {exc}") from exc
 
     def _validate(self, plan: Plan, existing_ids: set[str]) -> None:
+        """Reject plans we must not execute. Checks run cheapest and most fundamental first.
+
+        1. An empty plan is only acceptable as a direct answer - or as a revision, where
+           "nothing more to do" is a legitimate result.
+        2. The step count is within `max_plan_steps` (a cost guardrail, enforced in code).
+        3. Every step names a real agent, has a unique id and a non-empty objective.
+        4. Every dependency refers to a step in this plan or an earlier round, and not to itself.
+        5. The dependency graph has no cycle.
+
+        Raises:
+            PlanValidationError: With a message written for the model to read and act on.
+        """
         if not plan.steps:
             if plan.answer_directly and plan.answer_directly.strip():
                 return
+            # A revision with no steps means "nothing more to do"; only a FIRST plan must have
+            # content.
             if existing_ids:  # a revision legitimately returns no steps
                 return
             raise PlanValidationError(
@@ -210,6 +267,8 @@ Reply with JSON only, in exactly this shape:
                 raise PlanValidationError(f"Step {step.id!r} has an empty objective.")
             ids.add(step.id)
 
+        # A step may depend on anything in this plan or on a step that already ran in an earlier
+        # round. That is how a follow-up builds on earlier findings.
         resolvable = ids | existing_ids
         for step in plan.steps:
             unknown = [dep for dep in step.depends_on if dep not in resolvable]
@@ -225,9 +284,12 @@ Reply with JSON only, in exactly this shape:
 
 def _assert_acyclic(plan: Plan) -> None:
     """Kahn's algorithm -- if anything is left over, the graph has a cycle."""
+    # step id -> the not-yet-removed dependencies that are inside THIS plan.
     pending = {step.id: set(step.depends_on) & {s.id for s in plan.steps} for step in plan.steps}
     while True:
+        # Steps with nothing left to wait for can be taken off the graph.
         ready = [step_id for step_id, deps in pending.items() if not deps]
+        # Nothing removable. Either the graph is empty (fine) or what remains is a cycle.
         if not ready:
             break
         for step_id in ready:

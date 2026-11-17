@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from agentops.agents.base import Agent
 
+# Three text fields, three different readers. `mandate` is read by the PLANNER, to decide whether to
+# delegate here at all, so it says when to use this agent. `instructions` and `output_contract` are
+# read by the AGENT itself: how to work, and the shape of its report.
 CODE_REVIEWER = Agent(
     name="code_reviewer",
     title="Staff Engineer doing code review",
@@ -38,6 +41,9 @@ Omit the section if there are none.
 
 **What I checked** -- one line listing the pull request, the diff and any CI run you read.
 """,
+    # Read-only and code-centred: the diff, CI results, coverage and ownership. Deliberately NO
+    # logs, metrics or release tools - a reviewer judges the change, and enforcing that keeps it
+    # from wandering into production forensics.
     tool_names=[
         "get_pull_request",
         "list_pull_requests",

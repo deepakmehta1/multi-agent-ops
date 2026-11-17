@@ -11,6 +11,12 @@ from agentops.tools.vcs import vcs_tools
 
 
 def build_registry(store: SystemsStore | None = None) -> ToolRegistry:
+    """Assemble the registry of every tool, all backed by one `SystemsStore`.
+
+    Args:
+        store: The backing systems. Defaults to the cached seeded store; tests pass their own
+            so they never depend on (or mutate) shared state.
+    """
     store = store or get_store()
     registry = ToolRegistry()
     for tool in (

@@ -24,10 +24,22 @@ class ToolCall:
 
     @classmethod
     def from_raw(cls, call_id: str, name: str, raw_arguments: str) -> ToolCall:
-        """Parse the JSON argument blob a provider returns, tolerating junk."""
+        """Build a `ToolCall` from the provider's raw JSON argument string.
+
+        Models occasionally emit malformed or non-object JSON. Raising here would abort the whole
+        run over one bad turn, so junk is kept instead: unparseable text becomes
+        `{"_unparsed": ...}` and a non-object value becomes `{"value": ...}`. The tool layer
+        then rejects those unknown arguments and tells the model what it should have sent.
+
+        Args:
+            call_id: The provider's id for this call; the tool result must echo it back.
+            name: Name of the requested tool.
+            raw_arguments: The JSON text exactly as the model produced it (may be empty).
+        """
         try:
             parsed = json.loads(raw_arguments or "{}")
         except json.JSONDecodeError:
+            # Keep the junk so the tool layer can answer the model with a precise error.
             parsed = {"_unparsed": raw_arguments}
         if not isinstance(parsed, dict):
             parsed = {"value": parsed}
@@ -36,6 +48,12 @@ class ToolCall:
 
 @dataclass(slots=True)
 class Message:
+    """One turn in a conversation, in a provider-neutral shape.
+
+    `role` is "system", "user", "assistant" or "tool". An assistant turn may carry
+    `tool_calls` instead of text; the matching "tool" turns answer them by `tool_call_id`.
+    """
+
     role: Role
     content: str | None = None
     tool_calls: list[ToolCall] = field(default_factory=list)
@@ -78,6 +96,7 @@ class ToolSpec:
     parameters: dict[str, Any]
 
     def to_wire(self) -> dict[str, Any]:
+        """Render as the `{type: function, function: {...}}` entry OpenAI expects."""
         return {
             "type": "function",
             "function": {
@@ -90,14 +109,21 @@ class ToolSpec:
 
 @dataclass(slots=True)
 class Usage:
+    """Token counts for one or more model calls.
+
+    Supports `+` so a run can total the planner, every agent turn and the synthesizer.
+    """
+
     prompt_tokens: int = 0
     completion_tokens: int = 0
 
     @property
     def total_tokens(self) -> int:
+        """Prompt plus completion tokens."""
         return self.prompt_tokens + self.completion_tokens
 
     def __add__(self, other: Usage) -> Usage:
+        """Sum two usages field by field, returning a new one (neither is mutated)."""
         return Usage(
             prompt_tokens=self.prompt_tokens + other.prompt_tokens,
             completion_tokens=self.completion_tokens + other.completion_tokens,
@@ -106,6 +132,8 @@ class Usage:
 
 @dataclass(slots=True)
 class Completion:
+    """The result of one model call: the assistant message, its cost, and why it stopped."""
+
     message: Message
     usage: Usage
     model: str
@@ -113,6 +141,7 @@ class Completion:
 
     @property
     def text(self) -> str:
+        """The assistant's text, or an empty string for a pure tool-calling turn."""
         return self.message.content or ""
 
 

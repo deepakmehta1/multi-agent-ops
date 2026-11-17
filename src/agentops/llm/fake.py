@@ -22,6 +22,11 @@ class Reply:
     tool_calls: list[tuple[str, dict[str, Any]]] = field(default_factory=list)
 
     def to_message(self, seq: int) -> Message:
+        """Turn this canned reply into an assistant `Message`.
+
+        Tool call ids are derived from the call sequence number (`call_<seq>_<index>`), so they
+        are unique within a run and identical from one test run to the next.
+        """
         return Message(
             role="assistant",
             content=self.content,
@@ -44,6 +49,11 @@ class ScriptedLLM:
     """
 
     def __init__(self, default: Reply | None = None) -> None:
+        """Create a scripted model with no rules.
+
+        Args:
+            default: Reply used when no rule matches. Defaults to the text "ok".
+        """
         self._rules: list[tuple[Matcher, Reply, bool, list[int]]] = []
         self._default = default or Reply(content="ok")
         self.calls: list[dict[str, Any]] = []
@@ -61,6 +71,7 @@ class ScriptedLLM:
             needle = matcher
 
             def matcher_fn(messages: list[Message], _tools: list[ToolSpec]) -> bool:
+                """Substring matcher: true when `needle` occurs in any message."""
                 return any(needle in (m.content or "") for m in messages)
 
             resolved: Matcher = matcher_fn
@@ -78,6 +89,16 @@ class ScriptedLLM:
         temperature: float | None = None,
         json_object: bool = False,
     ) -> Completion:
+        """Answer from the first unspent rule whose matcher accepts this conversation.
+
+        Rules are tried in registration order; a non-sticky rule that has fired is skipped. If
+        none match, the default reply is used. Every call is recorded in `self.calls` so a test
+        can assert what the model was shown. Token usage is a flat 100 prompt + 20 completion
+        per call, which makes totals exactly predictable.
+
+        When `json_object` is set the reply is parsed, so a malformed fixture fails the test
+        loudly instead of surfacing as a confusing planner error later.
+        """
         tools = tools or []
         self._seq += 1
         self.calls.append(
@@ -90,6 +111,8 @@ class ScriptedLLM:
         )
 
         reply = self._default
+        # First match wins. `used` records the call numbers a rule has answered, so a spent
+        # non-sticky rule is skipped and the next matching rule gets its turn.
         for matcher, candidate, sticky, used in self._rules:
             if used and not sticky:
                 continue
@@ -98,6 +121,7 @@ class ScriptedLLM:
                 reply = candidate
                 break
 
+        # The planner asks for JSON; check the fixture really is JSON at the point it is served.
         if json_object and reply.content:
             json.loads(reply.content)  # fail loudly on a malformed fixture
 

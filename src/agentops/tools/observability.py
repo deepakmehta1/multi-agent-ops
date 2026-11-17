@@ -7,6 +7,7 @@ from agentops.tools.base import Tool, integer, obj, string
 
 
 def observability_tools(store: SystemsStore) -> list[Tool]:
+    """Tools over production state: services, deploys, metrics, logs, incidents and on-call."""
     return [
         Tool(
             name="get_service_info",
@@ -37,6 +38,7 @@ def observability_tools(store: SystemsStore) -> list[Tool]:
                     "limit": integer("How many to return (default 10)."),
                 }
             ),
+            # `limit` is coerced for the same reason as numeric ids elsewhere: models may send "5".
             handler=lambda service=None, limit=10: store.deployments(
                 service=service, limit=int(limit)
             ),

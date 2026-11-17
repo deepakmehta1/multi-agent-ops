@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from agentops.agents.base import Agent
 
+# Three text fields, three different readers. `mandate` is read by the PLANNER, to decide whether to
+# delegate here at all, so it says when to use this agent. `instructions` and `output_contract` are
+# read by the AGENT itself: how to work, and the shape of its report.
 INCIDENT_RESPONDER = Agent(
     name="incident_responder",
     title="Site Reliability Engineer on call",
@@ -44,6 +47,8 @@ disprove it.
 
 **What I checked** -- the deploys, metrics and log queries you looked at.
 """,
+    # The widest scope, because diagnosing an outage crosses domains: incidents, deploys, metrics,
+    # logs and on-call, plus the pull request and CI run of a suspect deploy.
     tool_names=[
         "list_incidents",
         "list_deployments",

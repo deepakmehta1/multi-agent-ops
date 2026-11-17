@@ -17,6 +17,11 @@ from helpers import is_first_plan, is_replan, is_synthesis, no_followup, plan_re
 
 @pytest.fixture
 def settings() -> Settings:
+    """Settings with small limits so tests exercise the guardrails quickly.
+
+    Notably 4 plan steps, 3 agent iterations and short timeouts, so budget and timeout paths
+    are reachable without long waits.
+    """
     return Settings(
         openai_api_key=None,
         orchestrator_model="test-orchestrator",
@@ -34,16 +39,19 @@ def settings() -> Settings:
 
 @pytest.fixture
 def agents() -> AgentRegistry:
+    """The standard four-specialist roster."""
     return AgentRegistry()
 
 
 @pytest.fixture
 def tools():
+    """The full tool registry over the seeded data."""
     return build_registry()
 
 
 @pytest.fixture
 def bus() -> EventBus:
+    """A fresh trace bus for one run."""
     return EventBus("run_test")
 
 
@@ -62,6 +70,11 @@ def scripted() -> ScriptedLLM:
 
 @pytest.fixture
 def client(settings: Settings, scripted: ScriptedLLM):
+    """A TestClient over the real app with the scripted model swapped in.
+
+    Overrides `get_llm_client` rather than setting a key, so the tests also cover the
+    dependency wiring, and clears the override afterwards.
+    """
     app = create_app(settings)
     app.dependency_overrides[get_llm_client] = lambda: scripted
     with TestClient(app) as test_client:

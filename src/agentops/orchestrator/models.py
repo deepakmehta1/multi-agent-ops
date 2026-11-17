@@ -11,12 +11,20 @@ from agentops.runtime.events import TraceEvent
 
 
 class StepStatus(StrEnum):
+    """Outcome of one delegation: it worked, it failed, or it never ran."""
+
     SUCCEEDED = "succeeded"
     FAILED = "failed"
     SKIPPED = "skipped"
 
 
 class RunStatus(StrEnum):
+    """Outcome of a whole run.
+
+    "partial" means at least one specialist succeeded and at least one did not - the answer
+    is built from what worked and says what is unverified.
+    """
+
     SUCCEEDED = "succeeded"
     PARTIAL = "partial"
     FAILED = "failed"
@@ -51,6 +59,8 @@ class Plan(BaseModel):
 
 
 class ToolCallView(BaseModel):
+    """A tool call as exposed in a run result (arguments and a truncated result)."""
+
     name: str
     arguments: dict = Field(default_factory=dict)
     ok: bool = True
@@ -59,6 +69,8 @@ class ToolCallView(BaseModel):
 
 
 class StepResult(BaseModel):
+    """The outcome of one plan step: its report or error, how it ran, and what it cost."""
+
     step_id: str
     agent: str
     objective: str
@@ -74,10 +86,13 @@ class StepResult(BaseModel):
 
     @property
     def succeeded(self) -> bool:
+        """Convenience for `status is SUCCEEDED`; used to decide dependants."""
         return self.status is StepStatus.SUCCEEDED
 
 
 class UsageView(BaseModel):
+    """Token and call totals for a whole run, covering planning, every agent turn and synthesis."""
+
     prompt_tokens: int = 0
     completion_tokens: int = 0
     total_tokens: int = 0
@@ -85,6 +100,8 @@ class UsageView(BaseModel):
 
 
 class RunResult(BaseModel):
+    """Everything one run produced: the answer, the plan(s), per-step results, trace and cost."""
+
     run_id: str
     request: str
     status: RunStatus
@@ -99,6 +116,7 @@ class RunResult(BaseModel):
 
     @property
     def agents_used(self) -> list[str]:
+        """Names of agents that ran, in first-use order, without repeats."""
         seen: list[str] = []
         for step in self.steps:
             if step.agent not in seen:

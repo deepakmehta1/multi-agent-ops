@@ -1,3 +1,7 @@
+/* Design tokens. Everything below uses these variables, never raw colours, so the dark theme is
+   just a second set of values (see the prefers-color-scheme block). Agent colours are identifiers
+   only: every agent is also named and given a two-letter badge, so colour is never the sole signal.
+   */
 :root {
   --bg: #f5f6f8;
   --surface: #ffffff;
@@ -28,6 +32,9 @@
   --sans: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
 }
 
+/* Dark theme: same token names, new values. Accent and status colours are lightened so text on the
+   dark surfaces keeps enough contrast.
+   */
 @media (prefers-color-scheme: dark) {
   :root {
     --bg: #0e1117;
@@ -226,11 +233,17 @@ summary:focus-visible, .ex:focus-visible, .hist:focus-visible {
 
 /* ---- graph ------------------------------------------------------------ */
 .graph { position: relative; }
+/* The dependency arrows are an SVG laid over the graph. app.js measures the cards and draws the
+   paths, so the SVG ignores the mouse and sits behind the cards.
+   */
 .edges { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
 .edges path { fill: none; stroke: var(--edge); stroke-width: 1.6; }
 .edges path.live { stroke: var(--accent); }
 .edges path.wait { stroke-dasharray: 4 4; }
 .edges marker path { fill: var(--edge); stroke: none; }
+/* One flex column per dependency depth ("wave"); the gap leaves room for the arrows. On narrow
+   screens the media query at the bottom turns this into a vertical stack.
+   */
 .waves { position: relative; display: flex; gap: 56px; align-items: flex-start; z-index: 1; }
 .wave { flex: 1 1 0; min-width: 0; display: grid; gap: 12px; }
 .wave-label {
@@ -254,9 +267,15 @@ summary:focus-visible, .ex:focus-visible, .hist:focus-visible {
 [data-agent="release_manager"] { --c: var(--agent-release_manager); }
 .node.running { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 .node.failed { border-color: var(--err); }
+/* Skipped and stopped steps are dashed and faded: they did not run, which is different from
+   failing.
+   */
 .node.skipped, .node.stopped { opacity: .72; border-style: dashed; }
 .node.pending { opacity: .85; }
 
+/* Grid children default to min-width:auto and would stretch the card around long unbroken text such
+   as tool arguments; min-width:0 lets them shrink and ellipsise instead.
+   */
 .node > * { min-width: 0; }
 .node-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
 .node-head .who { font-weight: 650; font-size: 14px; }
@@ -318,8 +337,10 @@ summary:focus-visible, .ex:focus-visible, .hist:focus-visible {
   background: var(--c, var(--agent-default)); min-width: 3px; opacity: .95;
 }
 .tl-bar.plan, .tl-bar.synth { background: var(--agent-orchestrator); opacity: .55; }
+/* Diagonal hatching marks a bar that is still growing (work in progress). */
 .tl-bar.running { background-image: repeating-linear-gradient(135deg, rgba(255,255,255,.28) 0 6px, transparent 6px 12px); }
 .tl-bar.failed { background: var(--err); }
+/* A skipped step never ran, so it has no bar to show. */
 .tl-bar.skipped { display: none; }
 .tl-axis { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 12px; margin-top: 2px; }
 .tl-ticks { position: relative; height: 16px; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
@@ -362,6 +383,9 @@ summary:focus-visible, .ex:focus-visible, .hist:focus-visible {
   .layout { grid-template-columns: minmax(0, 1fr); padding: 16px; }
   .top { padding: 10px 16px; }
 }
+/* Phone width: the graph becomes a vertical stack (and app.js draws the arrows vertically), and the
+   timeline labels get narrower.
+   */
 @media (max-width: 760px) {
   .brand p { display: none; }
   .brand h1 { white-space: nowrap; }

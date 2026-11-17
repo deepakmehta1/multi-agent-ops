@@ -73,15 +73,25 @@ async def stream_run(
     called -- and finally `event: result` with the same body `/v1/requests`
     returns. The client sees which agent is working before the answer exists.
     """
+    # The id and the bus are created HERE, before the run starts, so the first SSE event can carry
+    # the id and we can subscribe before anything is emitted.
     run_id = Orchestrator.new_run_id()
     bus = EventBus(run_id)
 
     async def publish() -> AsyncIterator[str]:
+        """Yield the SSE stream: the run id, every trace event as it happens, then the result.
+
+        Event order is always `run`, then zero or more `trace`, then `result`. The generator owns
+        the lifetime of the orchestration task, which is what makes a client hang-up stop the work.
+        """
+        # Run the orchestration as its own task, so this generator can stream while it works.
         task = asyncio.create_task(orchestrator.run(payload.request, run_id=run_id, bus=bus))
         try:
             yield _sse("run", {"run_id": run_id, "request": payload.request})
+            # Replays anything already emitted, then streams until the orchestrator closes the bus.
             async for event in bus.subscribe():
                 yield _sse("trace", event.model_dump(mode="json"))
+            # The bus is closed only when the run is over, so this returns promptly.
             result = await task
             await runs.save(result)
             yield _sse(
@@ -94,6 +104,8 @@ async def stream_run(
             # The client hung up; stop the run rather than letting it burn tokens.
             task.cancel()
             raise
+        # Reached on normal completion AND when the client disconnects (the generator is closed).
+        # Either way make sure no orchestration keeps spending tokens for nobody.
         finally:
             bus.close()
             if not task.done():
@@ -102,6 +114,7 @@ async def stream_run(
     return StreamingResponse(
         publish(),
         media_type="text/event-stream",
+        # No caching, and tell nginx-style proxies not to buffer, or events arrive in one lump.
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 
@@ -115,6 +128,7 @@ async def list_runs(
     runs: RunStoreDep,
     limit: int = Query(default=50, ge=1, le=200),
 ) -> list[str]:
+    """Ids of the most recent runs, newest first (at most `limit`)."""
     return await runs.list_ids(limit=limit)
 
 
@@ -129,9 +143,19 @@ async def get_run(
     run_id: str = Path(description="Run id returned by /v1/requests."),
     include_trace: bool = Query(default=True),
 ) -> RunResponse:
+    """A finished run by id. Includes the full trace unless `include_trace=false`.
+
+    Raises:
+        RunNotFoundError: Unknown id, or the run aged out of the bounded history (404).
+    """
     result = await runs.get(run_id)
     return RunResponse.from_run(result, include_trace=include_trace)
 
 
 def _sse(event: str, data: dict) -> str:
+    """Format one server-sent event.
+
+    `data` is JSON on a single line (json.dumps never emits raw newlines), so one `data:`
+    field per event is always enough. Non-JSON-native values are stringified.
+    """
     return f"event: {event}\ndata: {json.dumps(data, default=str)}\n\n"

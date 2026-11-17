@@ -12,6 +12,10 @@ router = APIRouter(prefix="/v1", tags=["introspection"])
 
 @router.get("/agents", response_model=AgentsResponse, summary="List the agent roster")
 async def list_agents(agents: AgentsDep, settings: SettingsDep) -> AgentsResponse:
+    """The orchestrator's role and limits, plus each specialist's mandate and tools.
+
+    This is the same roster text the planner reads when deciding whom to delegate to.
+    """
     return AgentsResponse(
         orchestrator={
             "role": "Delivery Lead",
@@ -39,6 +43,10 @@ async def list_agents(agents: AgentsDep, settings: SettingsDep) -> AgentsRespons
 
 @router.get("/tools", response_model=list[ToolView], summary="List the tool catalogue")
 async def list_tools(tools: ToolsDep, agents: AgentsDep) -> list[ToolView]:
+    """Every tool in the catalogue with its JSON schema and which agents may call it.
+
+    `used_by` makes the access rules visible: a tool is only reachable by the agents listed.
+    """
     return [
         ToolView(
             name=name,

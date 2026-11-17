@@ -6,6 +6,8 @@ on:
   pull_request:
   workflow_dispatch:
 
+# A newer push to the same branch cancels the run still in progress, so results are never stale and
+# minutes are not wasted.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -14,8 +16,10 @@ jobs:
   test:
     runs-on: ubuntu-latest
     strategy:
+      # Let every Python version finish, so a failure on one does not hide the others.
       fail-fast: false
       matrix:
+        # The supported range: pyproject.toml requires Python 3.11 or newer.
         python-version: ["3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@v7
@@ -24,6 +28,7 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
+          # There is no lockfile, so the dependency spec is pyproject.toml; key the pip cache on it.
           cache-dependency-path: pyproject.toml
 
       - name: Install
@@ -43,9 +48,13 @@ jobs:
       - name: Test
         run: pytest --cov=agentops --cov-report=term-missing
 
+      # Runs a real orchestration against the scripted model, which catches a broken control flow
+      # that isolated unit tests could miss.
       - name: Offline demo
         run: python scripts/demo.py --offline
 
+  # Builds and boots the image. Unit tests cannot cover this: the Dockerfile itself, the data files
+  # that must ship inside the package, and the health and readiness probes.
   docker:
     runs-on: ubuntu-latest
     steps:
@@ -55,6 +64,7 @@ jobs:
       - name: Boot it and check the probes
         run: |
           docker run -d --name api -p 8000:8000 multi-agent-ops:ci
+          # Wait up to 30 seconds for the server to come up.
           for _ in $(seq 1 30); do
             curl -fsS http://localhost:8000/healthz && break
             sleep 1

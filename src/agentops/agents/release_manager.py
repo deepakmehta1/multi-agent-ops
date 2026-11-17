@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from agentops.agents.base import Agent
 
+# Three text fields, three different readers. `mandate` is read by the PLANNER, to decide whether to
+# delegate here at all, so it says when to use this agent. `instructions` and `output_contract` are
+# read by the AGENT itself: how to work, and the shape of its report.
 RELEASE_MANAGER = Agent(
     name="release_manager",
     title="Release Manager",
@@ -38,6 +41,8 @@ Internal, written for API consumers. Include only when release notes were asked 
 
 **What I checked** -- the checklist items you verified and against what.
 """,
+    # Checklist, merged pull requests, open incidents, CI and tickets: enough to verify each
+    # checklist item against the underlying system instead of trusting its note.
     tool_names=[
         "get_release_checklist",
         "list_merged_pull_requests",

@@ -13,6 +13,7 @@ router = APIRouter(tags=["health"])
 
 @router.get("/healthz", response_model=HealthResponse, summary="Liveness probe")
 async def healthz(settings: SettingsDep) -> HealthResponse:
+    """Liveness: the process is up and serving. Does no work, so it is safe to poll often."""
     return HealthResponse(status="ok", environment=settings.environment, version=__version__)
 
 

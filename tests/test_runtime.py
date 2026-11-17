@@ -1,3 +1,5 @@
+"""Runtime services: the run store, the trace bus replay logic and JSON logging."""
+
 from __future__ import annotations
 
 import asyncio
@@ -14,12 +16,14 @@ from agentops.runtime.store import InMemoryRunStore
 
 
 def _run(run_id: str) -> RunResult:
+    """A minimal finished run with the given id."""
     return RunResult(
         run_id=run_id, request="r", status=RunStatus.SUCCEEDED, answer="a", plan=Plan()
     )
 
 
 async def test_the_store_keeps_recent_runs_and_evicts_the_oldest():
+    """With room for two runs, saving a third drops the oldest and lists newest first."""
     store = InMemoryRunStore(max_size=2)
     for name in ("run_a", "run_b", "run_c"):
         await store.save(_run(name))
@@ -31,12 +35,14 @@ async def test_the_store_keeps_recent_runs_and_evicts_the_oldest():
 
 
 async def test_a_subscriber_sees_everything_including_what_happened_before_it_joined():
+    """A late subscriber gets the earlier events replayed, then the live ones, in order."""
     bus = EventBus("run_x")
     bus.emit(EventType.RUN_STARTED, message="before")
 
     received: list[EventType] = []
 
     async def consume() -> None:
+        """Collect event types from the bus until it closes."""
         async for event in bus.subscribe():
             received.append(event.type)
 
@@ -74,6 +80,7 @@ async def test_no_event_is_delivered_twice_when_one_lands_mid_replay():
 
 
 async def test_a_subscriber_joining_after_the_run_finished_still_gets_the_trace():
+    """Subscribing to an already-closed bus replays the whole trace and then ends."""
     bus = EventBus("run_x")
     bus.emit(EventType.RUN_STARTED)
     bus.emit(EventType.RUN_COMPLETED)

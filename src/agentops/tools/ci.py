@@ -7,6 +7,7 @@ from agentops.tools.base import Tool, integer, obj, string
 
 
 def ci_tools(store: SystemsStore) -> list[Tool]:
+    """Tools over CI results, coverage and the repository's test conventions."""
     return [
         Tool(
             name="get_ci_runs",
@@ -20,6 +21,7 @@ def ci_tools(store: SystemsStore) -> list[Tool]:
                     "pull_request": integer("Only runs for this pull request number."),
                 }
             ),
+            # Models sometimes send numbers as strings ("482"); coerce so the filter still matches.
             handler=lambda repo=None, pull_request=None: store.ci_runs(
                 repo=repo,
                 pull_request=int(pull_request) if pull_request is not None else None,

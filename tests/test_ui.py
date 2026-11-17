@@ -9,6 +9,7 @@ from helpers import agent_turn, is_first_plan, is_replan, plan_reply, step
 
 
 def test_the_root_redirects_to_the_console(client):
+    """Visiting the site root sends the browser to the console."""
     response = client.get("/", follow_redirects=False)
 
     assert response.status_code in (302, 307)
@@ -16,6 +17,7 @@ def test_the_root_redirects_to_the_console(client):
 
 
 def test_the_console_and_its_assets_are_served(client):
+    """The page, its script and its stylesheet are served with the right types."""
     page = client.get("/ui/")
     assert page.status_code == 200
     assert page.headers["content-type"].startswith("text/html")
@@ -42,6 +44,7 @@ def test_the_console_needs_nothing_from_the_internet(client):
 
 
 def test_the_console_is_not_part_of_the_api_schema(client):
+    """The console is a static mount, so it stays out of OpenAPI."""
     paths = client.get("/openapi.json").json()["paths"]
 
     assert "/" not in paths

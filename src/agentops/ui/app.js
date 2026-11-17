@@ -15,23 +15,66 @@
 
 const $ = (id) => document.getElementById(id);
 
+/**
+ * Escape text for safe use in HTML, in both element and attribute position.
+ *
+ * Every string that came from a model or a tool goes through this before it reaches
+ * innerHTML; it is the page's only defence against injected markup.
+ *
+ * @param {*} value Anything; null and undefined become the empty string.
+ * @returns {string} The escaped text.
+ */
 const esc = (value) =>
   String(value ?? "").replace(/[&<>"']/g, (c) => (
     { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
   ));
 
+/**
+ * Format a duration for display: "840 ms", "1.41 s" or "13.9 s".
+ *
+ * @param {number|null} ms Milliseconds.
+ * @returns {string} The formatted duration, or "" when unknown.
+ */
 const fmtMs = (ms) => {
   if (ms == null || Number.isNaN(ms)) return "";
   if (ms < 1000) return `${Math.max(0, Math.round(ms))} ms`;
   return `${(ms / 1000).toFixed(ms < 10000 ? 2 : 1)} s`;
 };
+/**
+ * Format a count with thousands separators ("11,886"); missing values read as 0.
+ *
+ * @param {number|null} n
+ * @returns {string}
+ */
 const fmtNum = (n) => Number(n ?? 0).toLocaleString();
+/**
+ * Turn an agent id into a display name: "code_reviewer" -> "Code Reviewer".
+ *
+ * @param {string} name
+ * @returns {string}
+ */
 const pretty = (name) =>
   String(name).split("_").map((w) => (w ? w[0].toUpperCase() + w.slice(1) : w)).join(" ");
+/**
+ * Two-letter badge for an agent ("code_reviewer" -> "CR"); the orchestrator is "DL".
+ *
+ * The badge carries the identity in text as well as colour, so the page does not rely
+ * on colour alone to tell agents apart.
+ *
+ * @param {string} name
+ * @returns {string}
+ */
 const monogram = (name) =>
   name === "orchestrator"
     ? "DL"
     : String(name).split("_").map((w) => (w ? w[0].toUpperCase() : "")).join("").slice(0, 2);
+/**
+ * Truncate to at most n characters, ending with an ellipsis when cut.
+ *
+ * @param {*} text
+ * @param {number} n
+ * @returns {string}
+ */
 const clip = (text, n) => (String(text).length > n ? `${String(text).slice(0, n - 1)}…` : String(text));
 
 const roster = {}; // agent name -> { title, mandate, tools }
@@ -57,6 +100,17 @@ const EXAMPLES = [
 
 /* ---------------------------------------------------------------- markdown */
 
+/**
+ * Render inline markdown (code, bold, italic, links) to safe HTML.
+ *
+ * Escape-first: each piece of text is escaped BEFORE any markup is added, so nothing the
+ * model wrote can become a tag. Code spans are split out first and escaped verbatim, so
+ * asterisks inside them are never treated as emphasis. Only http(s) URLs become links;
+ * javascript: and data: URLs stay as plain text.
+ *
+ * @param {string} text One line or paragraph of markdown.
+ * @returns {string} HTML.
+ */
 function inlineMd(text) {
   return String(text)
     .split(/(`[^`\n]+`)/g)
@@ -75,6 +129,17 @@ function inlineMd(text) {
     .join("");
 }
 
+/**
+ * Render the subset of markdown that agent reports use to safe HTML.
+ *
+ * Supported: fenced code, headings, rules, tables, nested bullet/numbered lists,
+ * blockquotes and paragraphs, plus the inline forms in `inlineMd`. It is a deliberately
+ * small hand-written renderer rather than a library, so the page has no dependency and
+ * the escaping rule is easy to audit: every text node goes through `esc`.
+ *
+ * @param {string} src Markdown text.
+ * @returns {string} HTML.
+ */
 function renderMarkdown(src) {
   const lines = String(src ?? "").replace(/\r\n?/g, "\n").split("\n");
   const out = [];
@@ -168,6 +233,16 @@ function renderMarkdown(src) {
 
 /* --------------------------------------------------------------- run model */
 
+/**
+ * Create the empty model of a run. Everything the page draws is derived from this.
+ *
+ * `status` is one of running, succeeded, partial, failed, stopped, error. `t0`/`tEnd` are
+ * epoch milliseconds: from the browser's clock for a live run, from the server's event
+ * timestamps for a replay. `steps` is keyed by plan step id and kept in plan order.
+ *
+ * @param {{id?: string, request: string, live: boolean}} init
+ * @returns {object} The run model.
+ */
 function newRun({ id = null, request, live }) {
   return {
     id, request, live,
@@ -184,6 +259,15 @@ function newRun({ id = null, request, live }) {
   };
 }
 
+/**
+ * Register plan steps in the model as "pending".
+ *
+ * Idempotent by step id, so receiving the same plan twice never resets a step's progress.
+ *
+ * @param {object} run
+ * @param {Array} steps Step objects from a plan event ({id, agent, objective, depends_on}).
+ * @param {boolean} followUp True for steps scheduled by the review round.
+ */
 function addSteps(run, steps, followUp) {
   for (const s of steps) {
     if (run.steps.has(s.id)) continue;
@@ -198,6 +282,15 @@ function addSteps(run, steps, followUp) {
   }
 }
 
+/**
+ * Return the step an event refers to, creating a placeholder if the plan never listed it.
+ *
+ * Defensive: it keeps the page working if events ever arrive for a step it has not seen.
+ *
+ * @param {object} run
+ * @param {object} ev A trace event.
+ * @returns {object|null} The step, or null when the event is not about a step.
+ */
 function ensureStep(run, ev) {
   if (!ev.step_id) return null;
   if (!run.steps.has(ev.step_id)) {
@@ -206,7 +299,19 @@ function ensureStep(run, ev) {
   return run.steps.get(ev.step_id);
 }
 
+/**
+ * Fold one trace event into the run model. This is the page's reducer.
+ *
+ * The same function handles a live stream and a replay of a stored run, which is why what
+ * you watch live is exactly what you can reopen later. The event vocabulary is documented
+ * on `EventType` in src/agentops/runtime/events.py.
+ *
+ * @param {object} run
+ * @param {object} ev A trace event ({seq, type, agent, step_id, message, data, at}).
+ */
 function applyEvent(run, ev) {
+  // Live: stamp events with the moment they ARRIVE, so the page's clock is self-consistent even if
+  // the server's clock differs. Replay: use the server's own timestamps.
   const t = run.live ? Date.now() : Date.parse(ev.at);
   if (run.t0 === null) run.t0 = t;
   run.events.push({ ev, t });
@@ -236,6 +341,9 @@ function applyEvent(run, ev) {
       run.toolCalls += 1;
       break;
     case "tool.result": {
+      // LIMITATION: tool results carry no call id, so a result is paired with the oldest
+      // still-running call of the same name. Two parallel calls to the SAME tool could swap their
+      // previews; calls to different tools are always paired correctly.
       const tool = s.tools.find((x) => x.name === ev.message && x.status === "running");
       if (tool) {
         tool.status = d.ok ? "ok" : "error";
@@ -266,6 +374,15 @@ function applyEvent(run, ev) {
   }
 }
 
+/**
+ * Merge the final result into the model and mark the run finished.
+ *
+ * The result is authoritative for what the trace only hints at: each step's full report,
+ * its server-measured duration and turn count, and the run's usage totals.
+ *
+ * @param {object} run
+ * @param {object} res The `result` event / run response body.
+ */
 function applyResult(run, res) {
   run.status = res.status;
   run.answer = res.answer;
@@ -285,10 +402,27 @@ function applyResult(run, res) {
   if (run.tEnd === null) run.tEnd = run.live ? Date.now() : run.t0 + (res.duration_ms || 0);
 }
 
+/**
+ * The moment to draw "up to": the browser clock while a live run is in flight, and the
+ * recorded end for a finished or replayed one (so a replay does not appear to keep running).
+ *
+ * @param {object} run
+ * @returns {number} Epoch milliseconds.
+ */
 const nowOf = (run) => (run.done || !run.live ? (run.tEnd ?? run.t0) : Date.now());
 
 /* ------------------------------------------------------------------ graph */
 
+/**
+ * Group steps into columns by dependency depth, which is how the plan graph is laid out.
+ *
+ * A step's column is the length of the longest dependency chain beneath it, so steps with
+ * no dependencies share column 0 and anything that waits on them lands further right.
+ * Steps in the same column are those the executor can run in parallel.
+ *
+ * @param {object} run
+ * @returns {Array<Array<object>>} Steps grouped by column, left to right.
+ */
 function wavesOf(run) {
   const depth = new Map();
   const visit = (id, seen = new Set()) => {
@@ -307,6 +441,10 @@ function wavesOf(run) {
   return waves.filter(Boolean);
 }
 
+/**
+ * Glyph and label per step status. A glyph accompanies every colour so status is never
+ * conveyed by colour alone.
+ */
 const STATUS = {
   pending: { glyph: "○", label: "Waiting" },
   running: { glyph: "", label: "Working" },
@@ -316,20 +454,48 @@ const STATUS = {
   stopped: { glyph: "■", label: "Stopped" },
 };
 
+// Keys of <details> the user has opened (tool calls, reports). The graph is rebuilt on every event,
+// so this is what stops them closing again.
 const openState = new Set(); // keys of <details> the user has opened; survives re-renders
 
+/**
+ * One-line "key=value" summary of a tool call's arguments for its collapsed row.
+ *
+ * @param {object} args
+ * @returns {string}
+ */
 function toolArgsSummary(args) {
   const entries = Object.entries(args || {});
   if (!entries.length) return "";
   return entries.map(([k, v]) => `${k}=${typeof v === "string" ? v : JSON.stringify(v)}`).join(", ");
 }
 
+/**
+ * How long a step has run, as text.
+ *
+ * Uses the server-measured duration once the step has finished, since it excludes network
+ * and rendering delay; before that it counts live from when the step started.
+ *
+ * @param {object} run
+ * @param {object} s A step.
+ * @returns {string} "" for a step that has not started.
+ */
 function stepElapsed(run, s) {
   if (s.durationMs != null && s.status !== "running") return fmtMs(s.durationMs);
   if (s.startedAt == null) return "";
   return fmtMs((s.endedAt ?? nowOf(run)) - s.startedAt);
 }
 
+/**
+ * Build the card for one step: header, objective, tool calls and, when done, its report.
+ *
+ * `<details>` elements remember being open through `openState`, because the whole graph is
+ * rebuilt on every event and would otherwise snap shut under the reader.
+ *
+ * @param {object} run
+ * @param {object} s A step.
+ * @returns {string} HTML (every dynamic value escaped).
+ */
 function nodeHTML(run, s) {
   const status = run.status === "stopped" && s.status === "running" ? "stopped" : s.status;
   const st = STATUS[status];
@@ -383,6 +549,12 @@ function nodeHTML(run, s) {
   </article>`;
 }
 
+/**
+ * Draw the plan: the Delivery Lead's reasoning and the step graph, or an explanatory state.
+ *
+ * States: answered directly (no steps), waiting for a plan, or the graph. Edges are drawn
+ * after the DOM exists, since they are measured from it.
+ */
 function renderPlan() {
   const wrap = $("graph-wrap");
   const run = current;
@@ -416,12 +588,21 @@ function renderPlan() {
   drawEdges();
 }
 
+/**
+ * Draw the dependency arrows as an SVG overlay, from each step to the steps it waits on.
+ *
+ * Positions are measured from the rendered cards, so this must run after layout and again
+ * whenever layout changes (see the ResizeObserver below). On a wide screen columns run left
+ * to right and arrows leave a card's right edge; on a narrow screen they stack and arrows
+ * run top to bottom. An arrow is solid once its upstream step is done, dashed while waiting.
+ */
 function drawEdges() {
   const graph = $("graph");
   const svg = $("edges");
   if (!graph || !svg || !current) return;
   svg.querySelectorAll("path.e").forEach((p) => p.remove());
   const box = graph.getBoundingClientRect();
+  // The CSS stacks the columns on a narrow screen; the arrows must follow suit.
   const vertical = getComputedStyle($("waves")).flexDirection === "column";
   const at = (id) => graph.querySelector(`[data-step="${CSS.escape(id)}"].node`);
 
@@ -458,11 +639,25 @@ function drawEdges() {
 
 /* --------------------------------------------------------------- timeline */
 
+/**
+ * Pick a round tick interval so the time axis has at most `maxTicks` labels.
+ *
+ * @param {number} span Axis length in milliseconds.
+ * @param {number} maxTicks
+ * @returns {number} Interval in milliseconds.
+ */
 function niceStep(span, maxTicks) {
   const candidates = [100, 250, 500, 1000, 2000, 5000, 10000, 15000, 30000, 60000];
   return candidates.find((c) => span / c <= maxTicks) || 60000;
 }
 
+/**
+ * Draw the timeline: one row per participant, one bar per stretch of work.
+ *
+ * This view exists to make parallelism visible: overlapping bars are agents working at the
+ * same time. The axis runs from the first event to now (live) or to the end (finished) and
+ * is at least one second wide so a very fast run does not collapse into a sliver.
+ */
 function renderTimeline() {
   const box = $("timeline");
   const run = current;
@@ -514,11 +709,17 @@ function renderTimeline() {
 
 /* ------------------------------------------------------- head, answer, raw */
 
+/**
+ * Run status -> [css class, label] for the pill in the run header.
+ */
 const STATUS_PILL = {
   running: ["run", "Running"], succeeded: ["ok", "Succeeded"], partial: ["warn", "Partial"],
   failed: ["err", "Failed"], stopped: ["", "Stopped"], error: ["err", "Error"],
 };
 
+/**
+ * Draw the run header: status pill, run id, the request and the stats.
+ */
 function renderHead() {
   const run = current;
   const [cls, label] = STATUS_PILL[run.status] || ["", run.status];
@@ -530,6 +731,10 @@ function renderHead() {
   renderStats();
 }
 
+/**
+ * Draw the stat tiles. Tokens and LLM calls read "-" until the result arrives, because only
+ * the server's final accounting is trustworthy.
+ */
 function renderStats() {
   const run = current;
   const elapsed = run.durationMs ?? (run.t0 != null ? nowOf(run) - run.t0 : 0);
@@ -544,6 +749,9 @@ function renderStats() {
     .map(([v, l]) => `<div class="stat"><b>${esc(v)}</b><span>${esc(l)}</span></div>`).join("");
 }
 
+/**
+ * Show a banner for outcomes that need explaining: an error, a partial run or a stopped one.
+ */
 function renderBanner() {
   const run = current;
   const banner = $("banner");
@@ -563,6 +771,9 @@ function renderBanner() {
   banner.innerHTML = html;
 }
 
+/**
+ * Draw the answer card: the rendered answer, a "waiting" placeholder, or an empty note.
+ */
 function renderAnswer() {
   const run = current;
   const box = $("answer");
@@ -580,10 +791,15 @@ function renderAnswer() {
     writing ? "The Delivery Lead is writing the answer…" : "Waiting for the specialists…"}</div>`;
 }
 
+/**
+ * Draw the raw trace log, one line per event, keeping it scrolled to the bottom while the
+ * reader has not scrolled up.
+ */
 function renderRaw() {
   const run = current;
   $("raw-count").textContent = `(${run.events.length} events)`;
   const log = $("raw-log");
+  // Only follow the tail if the reader is already at the bottom; do not yank them back down.
   const stick = log.scrollTop + log.clientHeight >= log.scrollHeight - 24;
   log.textContent = run.events.map(({ ev, t }) => {
     const rel = `+${((t - run.t0) / 1000).toFixed(2)}s`.padEnd(9);
@@ -593,9 +809,13 @@ function renderRaw() {
   if (stick) log.scrollTop = log.scrollHeight;
 }
 
+// The run being displayed: either the live one or a replay. Null before anything has run.
 let current = null;
 let frame = 0;
 
+/**
+ * Redraw the whole page from the current run model. Cheap enough to call on every event.
+ */
 function render() {
   if (!current) return;
   $("empty").hidden = true;
@@ -607,6 +827,9 @@ function render() {
   renderAnswer();
   renderRaw();
 }
+/**
+ * Request a redraw, coalescing a burst of events into one paint per animation frame.
+ */
 function schedule() {
   if (!frame) frame = requestAnimationFrame(() => { frame = 0; render(); });
 }
@@ -632,6 +855,11 @@ new ResizeObserver(() => drawEdges()).observe(document.body);
 
 /* ----------------------------------------------------------------- network */
 
+/**
+ * An error response from the API (not a network failure), carrying the server's message.
+ *
+ * `code` is the server's stable error code, e.g. "missing_credentials".
+ */
 class ApiError extends Error {
   constructor(status, body) {
     super(body?.error || body?.detail?.[0]?.msg || `HTTP ${status}`);
@@ -640,6 +868,20 @@ class ApiError extends Error {
   }
 }
 
+/**
+ * POST a request to the streaming endpoint and call `onEvent` for each server-sent event.
+ *
+ * EventSource cannot POST or set headers, so this reads the response body directly and
+ * parses the SSE framing itself: events are separated by a blank line, and a network
+ * chunk may end mid-event, so incomplete data is buffered until the rest arrives.
+ *
+ * @param {string} request The question to ask.
+ * @param {string} key Optional OpenAI key, sent as X-OpenAI-Key.
+ * @param {AbortSignal} signal Aborting closes the stream, which makes the server cancel
+ *     the run.
+ * @param {(event: string, data: object) => void} onEvent Called as "run", "trace", "result".
+ * @throws {ApiError} The server rejected the request before streaming began.
+ */
 async function streamRun(request, key, signal, onEvent) {
   const headers = { "content-type": "application/json" };
   if (key) headers["X-OpenAI-Key"] = key;
@@ -658,6 +900,8 @@ async function streamRun(request, key, signal, onEvent) {
     const { done, value } = await reader.read();
     if (done) break;
     buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n");
+    // SSE events end with a blank line. A chunk can end anywhere, so keep the unfinished tail in
+    // `buffer` until the rest of it arrives.
     let cut;
     while ((cut = buffer.indexOf("\n\n")) >= 0) {
       const frameText = buffer.slice(0, cut);
@@ -673,8 +917,12 @@ async function streamRun(request, key, signal, onEvent) {
   }
 }
 
+// AbortController of the run in flight; non-null means a run is in progress.
 let controller = null;
 
+/**
+ * Toggle the composer between idle and a run in flight (Run vs Stop).
+ */
 function setBusy(busy) {
   $("run").disabled = busy;
   $("run").textContent = busy ? "Running…" : "Run";
@@ -682,6 +930,15 @@ function setBusy(busy) {
   $("request").readOnly = busy;
 }
 
+/**
+ * Start a live run and drive the page from its stream until it ends.
+ *
+ * Handles every way a run can end: finished, stopped by the user (abort), rejected by the
+ * server (for example no key), or interrupted. Whatever happens, it always clears the busy
+ * state and refreshes the history.
+ *
+ * @param {string} text The request.
+ */
 async function start(text) {
   if (controller || text.trim().length < 3) return;
   controller = new AbortController();
@@ -724,6 +981,13 @@ async function start(text) {
   }
 }
 
+/**
+ * Load a finished run from the server and show it exactly as it appeared live.
+ *
+ * Feeds the stored trace through the same reducer as a live stream.
+ *
+ * @param {string} id Run id.
+ */
 async function replay(id) {
   if (controller) return;
   const res = await fetch(`/v1/runs/${encodeURIComponent(id)}?include_trace=true`);
@@ -741,6 +1005,9 @@ async function replay(id) {
 
 /* ------------------------------------------------------- sidebar and boot */
 
+/**
+ * Mark the history entry for run `id` as current (or none).
+ */
 function highlightHistory(id) {
   document.querySelectorAll(".hist").forEach((b) => {
     if (b.dataset.id === id) b.setAttribute("aria-current", "true");
@@ -748,6 +1015,15 @@ function highlightHistory(id) {
   });
 }
 
+/**
+ * Reload the "Recent runs" list.
+ *
+ * The API lists ids only, so this fetches each run (without its trace) to show its request
+ * and outcome. That is one request per entry, acceptable for a dozen in-memory runs but the
+ * first thing to replace with a summary endpoint if history ever grows.
+ *
+ * @param {string|null} activeId Run to highlight.
+ */
 async function refreshHistory(activeId = null) {
   try {
     const ids = await (await fetch("/v1/runs?limit=12")).json();
@@ -767,6 +1043,9 @@ async function refreshHistory(activeId = null) {
   } catch { /* history is a convenience; the console works without it */ }
 }
 
+/**
+ * Load the agent roster for the sidebar, and remember each agent's title and tools.
+ */
 async function loadRoster() {
   try {
     const data = await (await fetch("/v1/agents")).json();
@@ -793,6 +1072,10 @@ async function loadRoster() {
   }
 }
 
+/**
+ * Show whether the server is up and whether it has its own OpenAI key. When it does not,
+ * reveal the key field so the user can supply one.
+ */
 async function checkReady() {
   const pill = $("ready");
   try {
@@ -807,6 +1090,9 @@ async function checkReady() {
   }
 }
 
+/**
+ * Wire up the page: examples, form, buttons, then load the roster and history.
+ */
 function boot() {
   $("examples").innerHTML = EXAMPLES.map((e, i) =>
     `<button class="ex" type="button" data-i="${i}"><b>${esc(e.tag)}</b><span>${esc(clip(e.text, 96))}</span></button>`).join("");

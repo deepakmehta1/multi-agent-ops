@@ -3,6 +3,7 @@ __pycache__/
 *.egg-info/
 .venv/
 venv/
+# Local secrets such as OPENAI_API_KEY. Never commit this file.
 .env
 .pytest_cache/
 .mypy_cache/

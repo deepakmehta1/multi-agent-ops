@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from agentops.agents.base import Agent
 
+# Three text fields, three different readers. `mandate` is read by the PLANNER, to decide whether to
+# delegate here at all, so it says when to use this agent. `instructions` and `output_contract` are
+# read by the AGENT itself: how to work, and the shape of its report.
 TEST_ENGINEER = Agent(
     name="test_engineer",
     title="Software Engineer in Test",
@@ -36,6 +39,8 @@ actual failure over five shallow ones.
 
 **What I checked** -- the repository, the coverage report and the CI run you read.
 """,
+    # Test layout, coverage and CI failures, plus the pull request it is testing. The test suite
+    # tool is what lets it write tests in the repository's own conventions.
     tool_names=[
         "get_test_suite",
         "get_coverage_report",

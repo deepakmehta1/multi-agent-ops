@@ -1,3 +1,5 @@
+"""The orchestrator end to end: planning, delegation, review, synthesis, failure."""
+
 from __future__ import annotations
 
 from agentops.llm.fake import Reply, ScriptedLLM
@@ -18,10 +20,12 @@ from helpers import (
 
 
 def _orchestrator(llm, agents, tools, settings) -> Orchestrator:
+    """Build an orchestrator over the shared fixtures."""
     return Orchestrator(llm=llm, agents=agents, tools=tools, settings=settings)
 
 
 async def test_a_request_fans_out_and_comes_back_as_one_answer(agents, tools, settings):
+    """Two specialists run, their reports are synthesised, and the trace brackets the run."""
     llm = ScriptedLLM()
     llm.when(
         is_first_plan,
@@ -69,6 +73,7 @@ async def test_a_single_specialist_answer_is_passed_through_verbatim(agents, too
 
 
 async def test_a_trivial_question_skips_the_specialists_entirely(agents, tools, settings):
+    """A direct plan makes exactly one model call: no specialist and no synthesis."""
     llm = ScriptedLLM()
     llm.when(is_first_plan, direct_reply("The release train runs Thursdays at 14:00 UTC."))
 
@@ -81,6 +86,7 @@ async def test_a_trivial_question_skips_the_specialists_entirely(agents, tools, 
 
 
 async def test_the_orchestrator_can_schedule_follow_up_work(agents, tools, settings):
+    """The review round can add a step that depends on an earlier one, and traces the revision."""
     llm = ScriptedLLM()
     llm.when(is_first_plan, plan_reply(step("s1", "code_reviewer", "Review PR 482.")))
     llm.when(
@@ -102,8 +108,13 @@ async def test_the_orchestrator_can_schedule_follow_up_work(agents, tools, setti
 
 
 async def test_a_partly_failed_run_still_returns_what_worked(agents, tools, settings):
+    """One failed specialist makes the run `partial` and the answer built from the survivor."""
+
     class HalfBroken(ScriptedLLM):
+        """A scripted model whose Site Reliability Engineer turns raise, to fail one specialist."""
+
         async def complete(self, messages, **kwargs):
+            """Fail only the SRE's own calls; everything else follows the script."""
             # Only the SRE's own turns fail; the planner prompt merely names the role.
             if "You are the Site Reliability Engineer" in (messages[0].content or ""):
                 raise RuntimeError("provider exploded")
@@ -134,8 +145,13 @@ async def test_a_partly_failed_run_still_returns_what_worked(agents, tools, sett
 
 
 async def test_a_failure_before_any_plan_exists_is_reported_not_raised(agents, tools, settings):
+    """If the model fails before a plan exists, the result is `failed` and not an exception."""
+
     class Broken:
+        """A model that always fails."""
+
         async def complete(self, *args, **kwargs):
+            """Always raise, as a provider outage would."""
             raise RuntimeError("provider down")
 
     result = await _orchestrator(Broken(), agents, tools, settings).run("Review PR 482")
@@ -146,10 +162,14 @@ async def test_a_failure_before_any_plan_exists_is_reported_not_raised(agents, t
 
 
 async def test_the_run_budget_is_enforced(agents, tools, settings):
+    """A run that exceeds `run_timeout_seconds` ends as failed and says it ran out of budget."""
     import asyncio
 
     class Slow:
+        """A model that takes far longer than the run budget."""
+
         async def complete(self, *args, **kwargs):
+            """Sleep past the budget, then return nothing."""
             await asyncio.sleep(1)
 
     impatient = settings.model_copy(update={"run_timeout_seconds": 0.05})

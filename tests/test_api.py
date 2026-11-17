@@ -1,3 +1,5 @@
+"""The HTTP API: probes, introspection, runs, streaming and error handling."""
+
 from __future__ import annotations
 
 import asyncio
@@ -16,12 +18,14 @@ from helpers import agent_turn, is_first_plan, is_replan, no_followup, plan_repl
 
 
 def test_healthz(client):
+    """Liveness reports ok along with the environment."""
     body = client.get("/healthz").json()
     assert body["status"] == "ok"
     assert body["environment"] == "test"
 
 
 def test_readyz_reports_where_credentials_come_from(client):
+    """Readiness reports the roster size and that credentials come from the caller."""
     body = client.get("/readyz").json()
     assert body == {
         "status": "ready",
@@ -32,6 +36,7 @@ def test_readyz_reports_where_credentials_come_from(client):
 
 
 def test_agents_endpoint_describes_the_roster(client):
+    """`/v1/agents` lists the four specialists in order, each with a mandate and tools."""
     body = client.get("/v1/agents").json()
     names = [agent["name"] for agent in body["agents"]]
     assert names == ["code_reviewer", "test_engineer", "incident_responder", "release_manager"]
@@ -40,6 +45,7 @@ def test_agents_endpoint_describes_the_roster(client):
 
 
 def test_tools_endpoint_links_tools_to_their_agents(client):
+    """`/v1/tools` shows which agents may use each tool, and each tool's schema."""
     tools = {tool["name"]: tool for tool in client.get("/v1/tools").json()}
     assert "code_reviewer" in tools["get_pull_request"]["used_by"]
     assert tools["search_logs"]["used_by"] == ["incident_responder"]
@@ -47,6 +53,7 @@ def test_tools_endpoint_links_tools_to_their_agents(client):
 
 
 def test_a_request_is_planned_delegated_and_answered(client):
+    """A request returns an answer with its plan and steps, without the trace by default."""
     response = client.post("/v1/requests", json={"request": "Review PR 482 on checkout-api."})
     assert response.status_code == 200
 
@@ -60,6 +67,7 @@ def test_a_request_is_planned_delegated_and_answered(client):
 
 
 def test_the_trace_is_returned_on_request(client):
+    """`include_trace` returns an ordered trace from run.started to run.completed."""
     body = client.post(
         "/v1/requests",
         json={"request": "Review PR 482 on checkout-api.", "include_trace": True},
@@ -71,6 +79,7 @@ def test_the_trace_is_returned_on_request(client):
 
 
 def test_a_finished_run_can_be_fetched_again(client):
+    """A run can be listed and fetched later, and it keeps its trace."""
     run_id = client.post("/v1/requests", json={"request": "Review PR 482."}).json()["run_id"]
 
     assert run_id in client.get("/v1/runs").json()
@@ -80,16 +89,19 @@ def test_a_finished_run_can_be_fetched_again(client):
 
 
 def test_an_unknown_run_is_a_404(client):
+    """An unknown run id gives a 404 with the `run_not_found` code."""
     response = client.get("/v1/runs/run_does_not_exist")
     assert response.status_code == 404
     assert response.json()["code"] == "run_not_found"
 
 
 def test_a_too_short_request_is_rejected(client):
+    """A request shorter than the minimum is rejected (422)."""
     assert client.post("/v1/requests", json={"request": "hi"}).status_code == 422
 
 
 def test_the_stream_emits_the_trace_then_the_result(client):
+    """The SSE stream sends `run`, then `trace` events, then `result`."""
     with client.stream(
         "POST", "/v1/requests/stream", json={"request": "Review PR 482 on checkout-api."}
     ) as response:
@@ -122,6 +134,7 @@ def test_without_any_key_the_service_says_so_rather_than_guessing(settings):
 
 
 def test_the_openapi_schema_documents_every_endpoint(client):
+    """Every public endpoint appears in the OpenAPI schema."""
     paths = client.get("/openapi.json").json()["paths"]
     assert set(paths) >= {
         "/healthz",
@@ -136,12 +149,14 @@ def test_the_openapi_schema_documents_every_endpoint(client):
 
 
 def test_responses_carry_a_correlation_id(client):
+    """A caller's X-Request-ID is echoed back, and one is generated when absent."""
     response = client.get("/healthz", headers={"X-Request-ID": "abc123"})
     assert response.headers["X-Request-ID"] == "abc123"
     assert client.get("/healthz").headers["X-Request-ID"]
 
 
 def test_settings_defaults_are_sane():
+    """The default guardrails are positive, and no server key means `has_server_key` is False."""
     settings = Settings(openai_api_key=None)
     assert settings.max_plan_steps >= 1
     assert settings.max_parallel_steps >= 1
@@ -149,6 +164,7 @@ def test_settings_defaults_are_sane():
 
 
 def _parse_sse(raw: str) -> list[tuple[str, dict]]:
+    """Split a raw SSE body into (event name, parsed JSON data) pairs."""
     events: list[tuple[str, dict]] = []
     for block in raw.strip().split("\n\n"):
         name = payload = None
@@ -171,7 +187,10 @@ async def test_a_client_that_hangs_up_stops_the_run(agents, tools, settings):
     """
 
     class Slow(ScriptedLLM):
+        """A scripted model that takes a moment per call."""
+
         async def complete(self, messages, **kwargs):
+            """Delay, then answer per the script."""
             await asyncio.sleep(0.15)
             return await super().complete(messages, **kwargs)
 

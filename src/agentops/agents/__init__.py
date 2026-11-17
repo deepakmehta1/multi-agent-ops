@@ -1,3 +1,5 @@
+"""The specialist agents and the roster the orchestrator delegates to."""
+
 from agentops.agents.base import (
     Agent,
     AgentResult,

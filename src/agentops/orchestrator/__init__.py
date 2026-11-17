@@ -1,3 +1,5 @@
+"""The orchestrator and its parts: planner, executor and synthesizer."""
+
 from agentops.orchestrator.executor import Executor
 from agentops.orchestrator.models import (
     Plan,

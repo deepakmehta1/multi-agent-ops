@@ -7,6 +7,7 @@ from agentops.tools.base import Tool, boolean, integer, obj, string
 
 
 def vcs_tools(store: SystemsStore) -> list[Tool]:
+    """Tools over source control: listing pull requests, reading one, and release scope."""
     return [
         Tool(
             name="list_pull_requests",
@@ -37,6 +38,8 @@ def vcs_tools(store: SystemsStore) -> list[Tool]:
                 },
                 required=["number"],
             ),
+            # Diffs are large and cost tokens, so they are opt-in: a model only asks for one when it
+            # really has to judge the code, not merely to list or triage pull requests.
             handler=lambda number, include_diff=False: store.pull_request(
                 int(number), include_diff=bool(include_diff)
             ),

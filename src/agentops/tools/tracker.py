@@ -7,6 +7,7 @@ from agentops.tools.base import Tool, obj, string
 
 
 def tracker_tools(store: SystemsStore) -> list[Tool]:
+    """Tools over the issue tracker and the release gate (checklist and schedule)."""
     return [
         Tool(
             name="list_tickets",
