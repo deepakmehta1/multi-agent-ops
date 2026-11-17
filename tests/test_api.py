@@ -1,11 +1,18 @@
 from __future__ import annotations
 
+import asyncio
 import json
 
 from fastapi.testclient import TestClient
 
+from agentops.api.routes_runs import stream_run
 from agentops.core.config import Settings
+from agentops.llm.fake import Reply, ScriptedLLM
 from agentops.main import create_app
+from agentops.orchestrator.orchestrator import Orchestrator
+from agentops.runtime.store import InMemoryRunStore
+from agentops.schemas import RunRequest
+from helpers import agent_turn, is_first_plan, is_replan, no_followup, plan_reply, step
 
 
 def test_healthz(client):
@@ -153,3 +160,34 @@ def _parse_sse(raw: str) -> list[tuple[str, dict]]:
         if name and payload is not None:
             events.append((name, payload))
     return events
+
+
+async def test_a_client_that_hangs_up_stops_the_run(agents, tools, settings):
+    """Closing the stream must stop the work, not just stop watching it.
+
+    The console's Stop button and its "no further tokens are being spent" message
+    both rest on this. The model is slowed so that, were the run still going, it
+    would visibly make more calls after the hang-up.
+    """
+
+    class Slow(ScriptedLLM):
+        async def complete(self, messages, **kwargs):
+            await asyncio.sleep(0.15)
+            return await super().complete(messages, **kwargs)
+
+    llm = Slow()
+    llm.when(is_first_plan, plan_reply(step("s1", "code_reviewer", "Review PR 482.")))
+    llm.when(agent_turn("code_reviewer"), Reply(content="report"))
+    llm.when(is_replan, no_followup(), sticky=True)
+    runs = InMemoryRunStore(max_size=10)
+    orchestrator = Orchestrator(llm=llm, agents=agents, tools=tools, settings=settings)
+
+    response = await stream_run(RunRequest(request="Review PR 482."), orchestrator, runs)
+    stream = response.body_iterator
+    assert (await anext(stream)).startswith("event: run")
+
+    await stream.aclose()  # the client hangs up
+    await asyncio.sleep(0.6)  # longer than the planner and the specialist would need
+
+    assert llm.calls == [], "the run kept calling the model after the client left"
+    assert await runs.list_ids() == []

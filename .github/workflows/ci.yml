@@ -37,6 +37,9 @@ jobs:
       - name: Type-check
         run: mypy
 
+      - name: Check the console script parses
+        run: node --check src/agentops/ui/app.js
+
       - name: Test
         run: pytest --cov=agentops --cov-report=term-missing
 

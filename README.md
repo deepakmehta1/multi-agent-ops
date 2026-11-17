@@ -144,6 +144,25 @@ Interactive API docs are at <http://localhost:8000/docs>.
 OPENAI_API_KEY=sk-... docker compose up --build
 ```
 
+### The console
+
+Open <http://localhost:8000> (it redirects to `/ui/`). It is the same API drawn as a page, so what you
+see live is what `GET /v1/runs/{id}` can replay later:
+
+- **Plan** — the dependency graph of delegations, appearing as the Delivery Lead decides it.
+  Independent steps share a column and are labelled *in parallel*; follow-up work from the review
+  round is badged.
+- **Each agent's work** — every tool call with its arguments, result and duration, plus the report it
+  handed back. Failed and skipped steps say why.
+- **Timeline** — one bar per delegation, so overlapping work is visible rather than claimed.
+- **Stop** — closes the stream, which cancels the run on the server (covered by a test), so no
+  further tokens are spent.
+- **Recent runs** — click one to replay it; `/ui/?run=<id>` is a shareable link.
+
+It is plain HTML, CSS and JavaScript served by the app itself: no build step, no CDN, and it works
+in an air-gapped container. Everything a model or tool produced is escaped before it is rendered.
+If the server has no `OPENAI_API_KEY`, the page asks for one and keeps it in the tab's memory only.
+
 ---
 
 ## API
@@ -274,7 +293,7 @@ make check      # ruff + mypy + the full suite
 make cov        # with a coverage report
 ```
 
-69 tests at 92% coverage, no network, no API key, under a second. The scripted LLM (`llm/fake.py`) matches on the
+75 tests at 92% coverage, no network, no API key, under a second. The scripted LLM (`llm/fake.py`) matches on the
 conversation and returns canned turns, so a whole multi-agent interaction — a plan, two parallel
 specialists, their tool calls, a follow-up round, the synthesis — is described as data.
 
@@ -299,6 +318,7 @@ src/agentops/
 ├── systems/            seeded stand-in for GitHub / CI / metrics / Jira
 ├── llm/                provider interface, OpenAI client, scripted fake
 ├── runtime/            trace event bus, run store
+├── ui/                 the console: static HTML, CSS and JS served at /ui
 └── core/               settings, logging, exceptions
 ```
 

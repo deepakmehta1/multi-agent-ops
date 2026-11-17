@@ -5,9 +5,12 @@ from __future__ import annotations
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse
+from fastapi.staticfiles import StaticFiles
 
 from agentops import __version__
 from agentops.agents.registry import AgentRegistry
@@ -21,6 +24,8 @@ from agentops.runtime.store import InMemoryRunStore
 from agentops.tools.catalog import build_registry
 
 log = get_logger(__name__)
+
+UI_DIR = Path(__file__).parent / "ui"
 
 DESCRIPTION = """
 A multi-agent system for a software delivery team.
@@ -93,6 +98,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(health_router)
     app.include_router(agents_router)
     app.include_router(runs_router)
+
+    # The console: a static page that talks to the API above. No build step, no CDN.
+    @app.get("/", include_in_schema=False)
+    async def root() -> RedirectResponse:
+        return RedirectResponse(url="/ui/")
+
+    app.mount("/ui", StaticFiles(directory=UI_DIR, html=True), name="ui")
     return app
 
 

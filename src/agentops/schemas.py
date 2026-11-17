@@ -59,6 +59,7 @@ class StepView(BaseModel):
 
 class RunResponse(BaseModel):
     run_id: str
+    request: str
     status: RunStatus
     answer: str
     agents_used: list[str]
@@ -73,6 +74,7 @@ class RunResponse(BaseModel):
     def from_run(cls, run: RunResult, *, include_trace: bool = False) -> RunResponse:
         return cls(
             run_id=run.run_id,
+            request=run.request,
             status=run.status,
             answer=run.answer,
             agents_used=run.agents_used,

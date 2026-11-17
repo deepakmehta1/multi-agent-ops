@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>multi-agent-ops · Delivery console</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%233b5bdb'/%3E%3Ccircle cx='16' cy='9' r='3.2' fill='white'/%3E%3Ccircle cx='8' cy='23' r='3.2' fill='white'/%3E%3Ccircle cx='24' cy='23' r='3.2' fill='white'/%3E%3Cpath d='M16 12v4M16 16l-6 5M16 16l6 5' stroke='white' stroke-width='2' fill='none' stroke-linecap='round'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+  <header class="top">
+    <div class="brand">
+      <span class="logo" aria-hidden="true">
+        <svg viewBox="0 0 32 32" width="30" height="30"><rect width="32" height="32" rx="8" fill="currentColor"/><circle cx="16" cy="9" r="3.2" fill="#fff"/><circle cx="8" cy="23" r="3.2" fill="#fff"/><circle cx="24" cy="23" r="3.2" fill="#fff"/><path d="M16 12v4M16 16l-6 5M16 16l6 5" stroke="#fff" stroke-width="2" fill="none" stroke-linecap="round"/></svg>
+      </span>
+      <div>
+        <h1>multi-agent-ops</h1>
+        <p>Delivery Lead &amp; four specialists</p>
+      </div>
+    </div>
+    <nav class="top-right">
+      <span id="ready" class="pill pill-muted" role="status">checking…</span>
+      <a href="/docs">API docs</a>
+    </nav>
+  </header>
+
+  <main class="layout">
+    <aside class="side">
+      <section class="card">
+        <h2>Ask the team</h2>
+        <form id="form" autocomplete="off">
+          <label class="sr-only" for="request">Request</label>
+          <textarea id="request" rows="5" maxlength="8000"
+            placeholder="Describe what you need, in plain language&hellip;"></textarea>
+          <div id="keyrow" class="keyrow" hidden>
+            <label for="apikey">OpenAI API key</label>
+            <input id="apikey" type="password" autocomplete="off" spellcheck="false" placeholder="sk-…">
+            <small>This server has no key of its own. Yours is held in this tab's memory only and sent as <code>X-OpenAI-Key</code>.</small>
+          </div>
+          <div class="actions">
+            <button id="run" class="btn primary" type="submit">Run</button>
+            <button id="stop" class="btn" type="button" hidden>Stop</button>
+            <span class="hint">Ctrl/⌘ + Enter</span>
+          </div>
+        </form>
+        <div class="examples-title">Try one</div>
+        <div id="examples" class="examples"></div>
+      </section>
+
+      <section class="card">
+        <h2>Roster</h2>
+        <div id="roster" class="roster"><p class="muted">Loading…</p></div>
+      </section>
+
+      <section class="card">
+        <h2>Recent runs</h2>
+        <ol id="history" class="history"><li class="muted">No runs yet.</li></ol>
+      </section>
+    </aside>
+
+    <section class="stage" aria-live="polite">
+      <div id="empty" class="empty card">
+        <h2>Watch a team of agents work</h2>
+        <p>Ask a question on the left. The <strong>Delivery Lead</strong> decides which specialists to involve,
+          runs the independent ones <em>in parallel</em>, and writes one answer from their reports.</p>
+        <ul class="what">
+          <li><b>Plan</b> &mdash; a dependency graph of delegations, drawn as it is decided.</li>
+          <li><b>Work</b> &mdash; every tool call each agent makes, with its arguments and result.</li>
+          <li><b>Timeline</b> &mdash; who was busy when, so parallelism is visible rather than claimed.</li>
+        </ul>
+      </div>
+
+      <div id="run-view" hidden>
+        <section class="card run-head">
+          <div class="run-top">
+            <span id="run-status" class="pill">running</span>
+            <code id="run-id" class="run-id"></code>
+          </div>
+          <p id="run-request" class="run-request"></p>
+          <div id="stats" class="stats"></div>
+        </section>
+
+        <div id="banner" class="banner" hidden></div>
+
+        <section class="card">
+          <h2>Plan</h2>
+          <p id="plan-reasoning" class="reasoning"></p>
+          <div id="graph-wrap"></div>
+        </section>
+
+        <section class="card">
+          <h2>Timeline</h2>
+          <div id="timeline"></div>
+        </section>
+
+        <section class="card answer">
+          <div class="answer-head">
+            <h2>Answer</h2>
+            <button id="copy" class="btn small" type="button" hidden>Copy</button>
+          </div>
+          <div id="answer" class="md"></div>
+        </section>
+
+        <details id="raw" class="card raw">
+          <summary>Raw trace <span id="raw-count" class="muted"></span></summary>
+          <pre id="raw-log"></pre>
+        </details>
+      </div>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
