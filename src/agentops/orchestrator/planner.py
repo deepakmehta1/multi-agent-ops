@@ -15,7 +15,7 @@ from agentops.agents.registry import AgentRegistry
 from agentops.core.config import Settings
 from agentops.core.exceptions import PlanValidationError
 from agentops.core.logging import get_logger
-from agentops.llm.base import LLMClient, Message
+from agentops.llm.base import LLMClient, Message, Usage
 from agentops.orchestrator.models import Plan, StepResult
 from agentops.runtime.events import EventBus, EventType
 
@@ -41,6 +41,9 @@ class Planner:
         self._agents = agents
         self._settings = settings
         self.llm_calls = 0
+        # Every token this planner spends, including repair attempts and replan
+        # rounds. The orchestrator reports it; nobody should have to guess.
+        self.usage = Usage()
 
     # -- prompts -----------------------------------------------------------
 
@@ -144,6 +147,7 @@ Reply with JSON only, in exactly this shape:
                 json_object=True,
             )
             self.llm_calls += 1
+            self.usage += completion.usage
             try:
                 plan = self._parse(completion.text)
                 self._validate(plan, existing_ids or set())

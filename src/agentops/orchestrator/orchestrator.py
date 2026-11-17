@@ -92,6 +92,10 @@ class Orchestrator:
             result = self._failure(run_id, request, f"{type(exc).__name__}: {exc}", bus)
 
         result.duration_ms = int((perf_counter() - started) * 1000)
+        # Usage is accounted for here and nowhere else, so that every exit path --
+        # a delegated run, a direct answer, a partial result, a failure, a timeout --
+        # reports the tokens that were really spent, planning included.
+        result.usage = _usage_for(result.steps, planner.usage + synthesizer.usage)
         result.usage.llm_calls = (
             planner.llm_calls
             + synthesizer.llm_calls
@@ -149,7 +153,7 @@ class Orchestrator:
             agent="orchestrator",
             message=f"Combining {len(steps)} specialist report(s)",
         )
-        answer, synthesis_usage = await synthesizer.synthesize(request, steps)
+        answer, _ = await synthesizer.synthesize(request, steps)
 
         status = _status_for(steps)
         bus.emit(
@@ -167,7 +171,6 @@ class Orchestrator:
             plan=plan,
             revisions=revisions,
             steps=steps,
-            usage=_usage_for(steps, synthesis_usage),
         )
 
     def _failure(self, run_id: str, request: str, message: str, bus: EventBus) -> RunResult:

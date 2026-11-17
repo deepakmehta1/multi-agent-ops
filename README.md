@@ -274,7 +274,7 @@ make check      # ruff + mypy + the full suite
 make cov        # with a coverage report
 ```
 
-67 tests at 92% coverage, no network, no API key, under a second. The scripted LLM (`llm/fake.py`) matches on the
+69 tests at 92% coverage, no network, no API key, under a second. The scripted LLM (`llm/fake.py`) matches on the
 conversation and returns canned turns, so a whole multi-agent interaction — a plan, two parallel
 specialists, their tool calls, a follow-up round, the synthesis — is described as data.
 

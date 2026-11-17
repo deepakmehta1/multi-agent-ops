@@ -157,3 +157,34 @@ async def test_the_run_budget_is_enforced(agents, tools, settings):
 
     assert result.status is RunStatus.FAILED
     assert "budget" in result.answer
+
+
+async def test_every_token_spent_is_reported_including_planning(agents, tools, settings):
+    """Usage has to cover planning, not just the specialists.
+
+    The planner's tokens were once dropped on the floor, so a run could report
+    three LLM calls and the cost of one. The scripted client bills a flat
+    100/20 per call, so the run total must equal what it actually served.
+    """
+    llm = ScriptedLLM()
+    llm.when(is_first_plan, plan_reply(step("s1", "code_reviewer", "Review PR 482.")))
+    llm.when(agent_turn("code_reviewer"), Reply(content="**Verdict:** request-changes"))
+    llm.when(is_replan, no_followup(), sticky=True)
+
+    result = await _orchestrator(llm, agents, tools, settings).run("Review PR 482")
+
+    assert result.usage.llm_calls == len(llm.calls)
+    assert result.usage.prompt_tokens == len(llm.calls) * 100
+    assert result.usage.completion_tokens == len(llm.calls) * 20
+    assert result.usage.total_tokens == len(llm.calls) * 120
+
+
+async def test_a_direct_answer_still_reports_what_the_planning_cost(agents, tools, settings):
+    """Answering without delegating is cheap, not free."""
+    llm = ScriptedLLM()
+    llm.when(is_first_plan, direct_reply("The release train runs Thursdays at 14:00 UTC."))
+
+    result = await _orchestrator(llm, agents, tools, settings).run("When is the release train?")
+
+    assert result.usage.llm_calls == 1
+    assert result.usage.total_tokens == 120

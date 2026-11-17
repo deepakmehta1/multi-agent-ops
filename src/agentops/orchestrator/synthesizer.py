@@ -27,6 +27,7 @@ class Synthesizer:
         self._llm = llm
         self._settings = settings
         self.llm_calls = 0
+        self.usage = Usage()
 
     async def synthesize(self, request: str, results: list[StepResult]) -> tuple[str, Usage]:
         if not results:
@@ -54,6 +55,7 @@ class Synthesizer:
             temperature=0.2,
         )
         self.llm_calls += 1
+        self.usage += completion.usage
         return completion.text, completion.usage
 
 

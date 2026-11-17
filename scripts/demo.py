@@ -110,7 +110,11 @@ async def run_offline(request: str) -> int:
         lambda m, t: is_planner(m, t) and not is_replan(m, t),
         Reply(content=json.dumps(plan)),
     )
-    llm.when(is_replan, Reply(content=json.dumps({"reasoning": "complete", "steps": []})), sticky=True)
+    llm.when(
+        is_replan,
+        Reply(content=json.dumps({"reasoning": "complete", "steps": []})),
+        sticky=True,
+    )
     llm.when(
         agent_is("Staff Engineer doing code review"),
         Reply(
@@ -135,8 +139,9 @@ async def run_offline(request: str) -> int:
     )
     llm.when(used_tools, Reply(content="(scripted specialist report)"), sticky=True)
     llm.when(
-        lambda messages, tools: not tools
-        and "you answer the person who asked" in (messages[0].content or ""),
+        lambda messages, tools: (
+            not tools and "you answer the person who asked" in (messages[0].content or "")
+        ),
         Reply(content="(scripted final answer -- supply an API key to get a real one)"),
         sticky=True,
     )
@@ -208,7 +213,9 @@ async def run_live(request: str, base_url: str, api_key: str | None) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("request", nargs="?", default=DEFAULT_REQUEST)
-    parser.add_argument("--offline", action="store_true", help="Run in-process with a scripted LLM.")
+    parser.add_argument(
+        "--offline", action="store_true", help="Run in-process with a scripted LLM."
+    )
     parser.add_argument("--base-url", default="http://localhost:8000")
     parser.add_argument("--api-key", default=None, help="Sent as X-OpenAI-Key.")
     args = parser.parse_args()
