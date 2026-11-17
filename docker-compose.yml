@@ -1,0 +1,13 @@
+services:
+  api:
+    build: .
+    image: multi-agent-ops:local
+    ports:
+      - "8000:8000"
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ORCHESTRATOR_MODEL: ${ORCHESTRATOR_MODEL:-gpt-4.1}
+      AGENT_MODEL: ${AGENT_MODEL:-gpt-4.1-mini}
+      ENVIRONMENT: docker
+      LOG_FORMAT: json
+    restart: unless-stopped

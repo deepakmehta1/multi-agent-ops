@@ -1,0 +1,475 @@
+{
+  "organisation": {
+    "name": "Northwind Payments",
+    "delivery_teams": ["payments-core", "notifications", "platform"],
+    "release_train": "Thursdays 14:00 UTC, feature freeze Wednesday 18:00 UTC"
+  },
+  "services": [
+    {
+      "name": "checkout-api",
+      "team": "payments-core",
+      "repo": "northwind/checkout-api",
+      "tier": 1,
+      "runbook": "https://runbooks.northwind.internal/checkout-api",
+      "slo": {"availability": "99.95%", "p99_latency_ms": 400}
+    },
+    {
+      "name": "ledger-service",
+      "team": "payments-core",
+      "repo": "northwind/ledger-service",
+      "tier": 1,
+      "runbook": "https://runbooks.northwind.internal/ledger-service",
+      "slo": {"availability": "99.99%", "p99_latency_ms": 250}
+    },
+    {
+      "name": "notification-worker",
+      "team": "notifications",
+      "repo": "northwind/notification-worker",
+      "tier": 2,
+      "runbook": "https://runbooks.northwind.internal/notification-worker",
+      "slo": {"availability": "99.5%", "p99_latency_ms": 2000}
+    }
+  ],
+  "pull_requests": [
+    {
+      "number": 482,
+      "repo": "northwind/checkout-api",
+      "title": "Add idempotency keys to POST /charges",
+      "author": "rkapoor",
+      "state": "open",
+      "base": "main",
+      "head": "feat/idempotency-keys",
+      "created_at": "2026-11-14T09:12:00Z",
+      "description": "Clients retry /charges on timeout and we double-charge. Store an idempotency key per charge and return the original response on replay. Closes DEL-1123.",
+      "labels": ["payments", "needs-review"],
+      "reviewers": ["mbianchi"],
+      "additions": 164,
+      "deletions": 12,
+      "changed_files": [
+        {
+          "path": "app/api/charges.py",
+          "status": "modified",
+          "additions": 58,
+          "deletions": 6,
+          "patch": "@@ -31,10 +31,52 @@ async def create_charge(payload: ChargeIn, session: AsyncSession = Depends(get_session)):\n-    charge = await charges.create(session, payload)\n-    return ChargeOut.from_orm(charge)\n+    key = payload.idempotency_key\n+    existing = await idempotency.get(session, key)\n+    if existing is not None:\n+        return ChargeOut.model_validate_json(existing.response_body)\n+\n+    charge = await charges.create(session, payload)\n+    response = ChargeOut.from_orm(charge)\n+    await idempotency.put(session, key, response.model_dump_json())\n+    await session.commit()\n+    return response"
+        },
+        {
+          "path": "app/repositories/idempotency.py",
+          "status": "added",
+          "additions": 94,
+          "deletions": 0,
+          "patch": "@@ -0,0 +1,94 @@\n+async def get(session: AsyncSession, key: str) -> IdempotencyRecord | None:\n+    stmt = select(IdempotencyRecord).where(IdempotencyRecord.key == key)\n+    return (await session.execute(stmt)).scalar_one_or_none()\n+\n+\n+async def put(session: AsyncSession, key: str, response_body: str) -> None:\n+    session.add(IdempotencyRecord(key=key, response_body=response_body))\n+    # NOTE: no unique constraint handling; concurrent inserts raise IntegrityError\n+\n+\n+async def purge_expired(session: AsyncSession, older_than_hours: int = 24) -> int:\n+    cutoff = datetime.utcnow() - timedelta(hours=older_than_hours)\n+    stmt = delete(IdempotencyRecord).where(IdempotencyRecord.created_at < cutoff)\n+    result = await session.execute(stmt)\n+    return result.rowcount"
+        },
+        {
+          "path": "app/models/idempotency.py",
+          "status": "added",
+          "additions": 12,
+          "deletions": 0,
+          "patch": "@@ -0,0 +1,12 @@\n+class IdempotencyRecord(Base):\n+    __tablename__ = \"idempotency_records\"\n+\n+    id: Mapped[int] = mapped_column(primary_key=True)\n+    key: Mapped[str] = mapped_column(String(64), index=True)\n+    response_body: Mapped[str] = mapped_column(Text())\n+    created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)"
+        },
+        {
+          "path": "app/schemas/charges.py",
+          "status": "modified",
+          "additions": 4,
+          "deletions": 0,
+          "patch": "@@ -8,6 +8,10 @@ class ChargeIn(BaseModel):\n     amount_minor: int\n     currency: str\n+    idempotency_key: str | None = None"
+        }
+      ],
+      "comments": [
+        {
+          "author": "mbianchi",
+          "created_at": "2026-11-14T15:40:00Z",
+          "body": "Looks close. Have you checked what happens when two retries land at the same millisecond?"
+        }
+      ]
+    },
+    {
+      "number": 479,
+      "repo": "northwind/ledger-service",
+      "title": "Widen FX amount precision to 8 decimal places",
+      "author": "achen",
+      "state": "open",
+      "base": "main",
+      "head": "fix/fx-precision",
+      "created_at": "2026-11-12T11:02:00Z",
+      "description": "Crypto-settled payouts were rounding to 2dp and losing fractions of a cent. Migrate numeric(18,2) to numeric(26,8).",
+      "labels": ["ledger", "migration", "needs-review"],
+      "reviewers": ["rkapoor"],
+      "additions": 71,
+      "deletions": 23,
+      "changed_files": [
+        {
+          "path": "migrations/versions/0042_widen_fx_precision.py",
+          "status": "added",
+          "additions": 28,
+          "deletions": 0,
+          "patch": "@@ -0,0 +1,28 @@\n+def upgrade() -> None:\n+    op.alter_column(\n+        \"ledger_entries\",\n+        \"amount\",\n+        type_=sa.Numeric(26, 8),\n+        existing_type=sa.Numeric(18, 2),\n+    )\n+\n+\n+def downgrade() -> None:\n+    op.alter_column(\n+        \"ledger_entries\",\n+        \"amount\",\n+        type_=sa.Numeric(18, 2),\n+        existing_type=sa.Numeric(26, 8),\n+    )"
+        },
+        {
+          "path": "app/domain/money.py",
+          "status": "modified",
+          "additions": 31,
+          "deletions": 19,
+          "patch": "@@ -12,19 +12,31 @@ class Money:\n-    def __init__(self, amount: float, currency: str) -> None:\n-        self.amount = round(amount, 2)\n+    def __init__(self, amount: Decimal | float | str, currency: str) -> None:\n+        self.amount = Decimal(str(amount)).quantize(Decimal(\"0.00000001\"))\n         self.currency = currency\n+\n+    def __add__(self, other: \"Money\") -> \"Money\":\n+        if other.currency != self.currency:\n+            raise ValueError(\"cannot add different currencies\")\n+        return Money(self.amount + other.amount, self.currency)"
+        }
+      ],
+      "comments": []
+    },
+    {
+      "number": 491,
+      "repo": "northwind/notification-worker",
+      "title": "Retry webhook delivery with exponential backoff",
+      "author": "lsorensen",
+      "state": "open",
+      "base": "main",
+      "head": "feat/webhook-retries",
+      "created_at": "2026-11-16T08:30:00Z",
+      "description": "Merchant webhooks fail silently on a 503. Add 5 retries with jittered backoff and a dead-letter queue.",
+      "labels": ["notifications"],
+      "reviewers": [],
+      "additions": 203,
+      "deletions": 41,
+      "changed_files": [
+        {
+          "path": "worker/delivery.py",
+          "status": "modified",
+          "additions": 97,
+          "deletions": 28,
+          "patch": "@@ -44,28 +44,97 @@ async def deliver(event: WebhookEvent) -> DeliveryResult:\n-    response = await client.post(event.url, json=event.payload)\n-    return DeliveryResult(ok=response.status_code < 400)\n+    for attempt in range(1, MAX_ATTEMPTS + 1):\n+        try:\n+            response = await client.post(event.url, json=event.payload, timeout=10)\n+            if response.status_code < 400:\n+                return DeliveryResult(ok=True, attempts=attempt)\n+        except httpx.TransportError:\n+            pass\n+        await asyncio.sleep(2 ** attempt)\n+    await dead_letter.push(event)\n+    return DeliveryResult(ok=False, attempts=MAX_ATTEMPTS)"
+        }
+      ],
+      "comments": []
+    }
+  ],
+  "merged_since_last_release": [
+    {
+      "number": 468,
+      "repo": "northwind/checkout-api",
+      "title": "Support partial refunds on captured charges",
+      "author": "mbianchi",
+      "merged_at": "2026-11-10T13:20:00Z",
+      "labels": ["feature", "payments"],
+      "ticket": "DEL-1098"
+    },
+    {
+      "number": 471,
+      "repo": "northwind/checkout-api",
+      "title": "Fix 500 when currency is lowercase",
+      "author": "rkapoor",
+      "merged_at": "2026-11-11T09:05:00Z",
+      "labels": ["bug"],
+      "ticket": "DEL-1104"
+    },
+    {
+      "number": 474,
+      "repo": "northwind/ledger-service",
+      "title": "Add daily reconciliation report job",
+      "author": "achen",
+      "merged_at": "2026-11-12T16:44:00Z",
+      "labels": ["feature", "ledger"],
+      "ticket": "DEL-1081"
+    },
+    {
+      "number": 476,
+      "repo": "northwind/notification-worker",
+      "title": "Drop deprecated v1 webhook payload format",
+      "author": "lsorensen",
+      "merged_at": "2026-11-13T10:15:00Z",
+      "labels": ["breaking-change", "notifications"],
+      "ticket": "DEL-1112"
+    },
+    {
+      "number": 477,
+      "repo": "northwind/checkout-api",
+      "title": "Bump httpx to 0.28 and pin certifi",
+      "author": "platform-bot",
+      "merged_at": "2026-11-13T11:02:00Z",
+      "labels": ["chore", "dependencies"],
+      "ticket": null
+    }
+  ],
+  "ci_runs": [
+    {
+      "id": "run-88214",
+      "repo": "northwind/checkout-api",
+      "pull_request": 482,
+      "commit": "a91f3c7",
+      "status": "failure",
+      "duration_seconds": 412,
+      "started_at": "2026-11-16T07:55:00Z",
+      "jobs": [
+        {"name": "lint", "status": "success", "duration_seconds": 38},
+        {"name": "unit", "status": "success", "duration_seconds": 121},
+        {
+          "name": "integration",
+          "status": "failure",
+          "duration_seconds": 253,
+          "failed_tests": [
+            {
+              "test": "tests/integration/test_charges.py::test_concurrent_retries_create_one_charge",
+              "message": "sqlalchemy.exc.IntegrityError: duplicate key value violates unique constraint \"idempotency_records_key_uq\"",
+              "occurrences": 3
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "run-88190",
+      "repo": "northwind/ledger-service",
+      "pull_request": 479,
+      "commit": "3de90b1",
+      "status": "success",
+      "duration_seconds": 298,
+      "started_at": "2026-11-15T18:20:00Z",
+      "jobs": [
+        {"name": "lint", "status": "success", "duration_seconds": 31},
+        {"name": "unit", "status": "success", "duration_seconds": 142},
+        {"name": "migration-check", "status": "success", "duration_seconds": 125}
+      ]
+    },
+    {
+      "id": "run-88301",
+      "repo": "northwind/notification-worker",
+      "pull_request": 491,
+      "commit": "7c2ab40",
+      "status": "success",
+      "duration_seconds": 184,
+      "started_at": "2026-11-16T09:10:00Z",
+      "jobs": [
+        {"name": "lint", "status": "success", "duration_seconds": 26},
+        {"name": "unit", "status": "success", "duration_seconds": 158}
+      ]
+    }
+  ],
+  "coverage": [
+    {
+      "repo": "northwind/checkout-api",
+      "commit": "a91f3c7",
+      "total_percent": 81.4,
+      "baseline_percent": 84.2,
+      "files": [
+        {"path": "app/api/charges.py", "percent": 76.0, "uncovered_lines": [38, 39, 40, 52, 53]},
+        {"path": "app/repositories/idempotency.py", "percent": 41.5, "uncovered_lines": [14, 15, 16, 17, 22, 23, 24, 31, 32]},
+        {"path": "app/models/idempotency.py", "percent": 100.0, "uncovered_lines": []}
+      ]
+    },
+    {
+      "repo": "northwind/ledger-service",
+      "commit": "3de90b1",
+      "total_percent": 91.2,
+      "baseline_percent": 90.8,
+      "files": [
+        {"path": "app/domain/money.py", "percent": 94.0, "uncovered_lines": [28, 29]}
+      ]
+    },
+    {
+      "repo": "northwind/notification-worker",
+      "commit": "7c2ab40",
+      "total_percent": 72.9,
+      "baseline_percent": 74.1,
+      "files": [
+        {"path": "worker/delivery.py", "percent": 68.0, "uncovered_lines": [51, 52, 53, 60, 61, 72, 73, 88, 89, 90]}
+      ]
+    }
+  ],
+  "test_suites": [
+    {
+      "repo": "northwind/checkout-api",
+      "files": [
+        "tests/unit/test_charges.py",
+        "tests/unit/test_refunds.py",
+        "tests/integration/test_charges.py",
+        "tests/integration/test_webhooks.py"
+      ],
+      "conventions": "pytest + pytest-asyncio, factory-boy fixtures in tests/factories.py, integration tests run against a throwaway Postgres via testcontainers",
+      "flaky": ["tests/integration/test_webhooks.py::test_signature_rotation"]
+    },
+    {
+      "repo": "northwind/ledger-service",
+      "files": ["tests/unit/test_money.py", "tests/unit/test_reconciliation.py"],
+      "conventions": "pytest, hypothesis for money arithmetic properties",
+      "flaky": []
+    },
+    {
+      "repo": "northwind/notification-worker",
+      "files": ["tests/test_delivery.py"],
+      "conventions": "pytest with respx for HTTP mocking",
+      "flaky": []
+    }
+  ],
+  "deployments": [
+    {
+      "service": "checkout-api",
+      "version": "2.13.4",
+      "commit": "f20ab91",
+      "environment": "production",
+      "deployed_at": "2026-11-16T06:40:00Z",
+      "deployed_by": "rkapoor",
+      "status": "succeeded"
+    },
+    {
+      "service": "ledger-service",
+      "version": "4.2.0",
+      "commit": "c81d443",
+      "environment": "production",
+      "deployed_at": "2026-11-15T14:05:00Z",
+      "deployed_by": "achen",
+      "status": "succeeded"
+    },
+    {
+      "service": "notification-worker",
+      "version": "1.9.2",
+      "commit": "aa39f02",
+      "environment": "production",
+      "deployed_at": "2026-11-14T12:00:00Z",
+      "deployed_by": "lsorensen",
+      "status": "succeeded"
+    }
+  ],
+  "incidents": [
+    {
+      "id": "INC-204",
+      "service": "checkout-api",
+      "severity": "SEV2",
+      "title": "Elevated 5xx on POST /charges",
+      "status": "open",
+      "opened_at": "2026-11-16T07:10:00Z",
+      "summary": "Error rate on POST /charges climbed from 0.2% to 4.8% starting 07:05 UTC. Checkout conversion down ~6%.",
+      "timeline": [
+        {"at": "2026-11-16T06:40:00Z", "note": "checkout-api 2.13.4 deployed to production"},
+        {"at": "2026-11-16T07:05:00Z", "note": "5xx rate alert fired"},
+        {"at": "2026-11-16T07:10:00Z", "note": "INC-204 opened, payments-core paged"}
+      ]
+    }
+  ],
+  "metrics": {
+    "checkout-api": {
+      "error_rate_percent": [
+        {"at": "2026-11-16T06:30:00Z", "value": 0.2},
+        {"at": "2026-11-16T06:45:00Z", "value": 0.3},
+        {"at": "2026-11-16T07:00:00Z", "value": 1.9},
+        {"at": "2026-11-16T07:15:00Z", "value": 4.8},
+        {"at": "2026-11-16T07:30:00Z", "value": 4.6}
+      ],
+      "p99_latency_ms": [
+        {"at": "2026-11-16T06:30:00Z", "value": 310},
+        {"at": "2026-11-16T07:00:00Z", "value": 980},
+        {"at": "2026-11-16T07:30:00Z", "value": 1240}
+      ],
+      "db_connection_pool_saturation_percent": [
+        {"at": "2026-11-16T06:30:00Z", "value": 41},
+        {"at": "2026-11-16T07:00:00Z", "value": 88},
+        {"at": "2026-11-16T07:30:00Z", "value": 97}
+      ]
+    },
+    "ledger-service": {
+      "error_rate_percent": [
+        {"at": "2026-11-16T07:00:00Z", "value": 0.01},
+        {"at": "2026-11-16T07:30:00Z", "value": 0.01}
+      ],
+      "p99_latency_ms": [
+        {"at": "2026-11-16T07:00:00Z", "value": 180},
+        {"at": "2026-11-16T07:30:00Z", "value": 194}
+      ]
+    },
+    "notification-worker": {
+      "error_rate_percent": [
+        {"at": "2026-11-16T07:00:00Z", "value": 1.1},
+        {"at": "2026-11-16T07:30:00Z", "value": 1.0}
+      ],
+      "queue_depth": [
+        {"at": "2026-11-16T07:00:00Z", "value": 420},
+        {"at": "2026-11-16T07:30:00Z", "value": 2180}
+      ]
+    }
+  },
+  "logs": [
+    {
+      "service": "checkout-api",
+      "at": "2026-11-16T07:06:11Z",
+      "level": "ERROR",
+      "message": "TimeoutError: connection pool exhausted waiting for a free connection (pool_size=20, overflow=0)",
+      "trace_id": "6f1a9c",
+      "count": 1842
+    },
+    {
+      "service": "checkout-api",
+      "at": "2026-11-16T07:06:40Z",
+      "level": "ERROR",
+      "message": "asyncpg.exceptions.TooManyConnectionsError: sorry, too many clients already",
+      "trace_id": "6f1a9c",
+      "count": 611
+    },
+    {
+      "service": "checkout-api",
+      "at": "2026-11-16T07:07:02Z",
+      "level": "WARNING",
+      "message": "idempotency.purge_expired skipped: lock held by another worker for 340s",
+      "trace_id": "b22e01",
+      "count": 96
+    },
+    {
+      "service": "checkout-api",
+      "at": "2026-11-16T06:41:03Z",
+      "level": "INFO",
+      "message": "startup complete version=2.13.4 db_pool_size=20 workers=8",
+      "trace_id": "init",
+      "count": 8
+    },
+    {
+      "service": "notification-worker",
+      "at": "2026-11-16T07:20:00Z",
+      "level": "WARNING",
+      "message": "webhook delivery failed status=503 merchant=mrc_8812 attempt=1",
+      "trace_id": "ab7731",
+      "count": 1204
+    }
+  ],
+  "oncall": [
+    {"team": "payments-core", "primary": "rkapoor", "secondary": "mbianchi", "until": "2026-11-20T09:00:00Z"},
+    {"team": "notifications", "primary": "lsorensen", "secondary": "achen", "until": "2026-11-20T09:00:00Z"},
+    {"team": "platform", "primary": "dvarga", "secondary": "rkapoor", "until": "2026-11-20T09:00:00Z"}
+  ],
+  "tickets": [
+    {
+      "id": "DEL-1123",
+      "title": "Double charges on client retry",
+      "status": "In Review",
+      "assignee": "rkapoor",
+      "team": "payments-core",
+      "priority": "P1",
+      "pull_request": 482
+    },
+    {
+      "id": "DEL-1131",
+      "title": "FX payouts lose sub-cent fractions",
+      "status": "In Review",
+      "assignee": "achen",
+      "team": "payments-core",
+      "priority": "P2",
+      "pull_request": 479
+    },
+    {
+      "id": "DEL-1140",
+      "title": "Merchant webhooks dropped on 503",
+      "status": "In Progress",
+      "assignee": "lsorensen",
+      "team": "notifications",
+      "priority": "P2",
+      "pull_request": 491
+    }
+  ],
+  "release_checklist": {
+    "version": "2.14.0",
+    "target_date": "2026-11-19T14:00:00Z",
+    "items": [
+      {"item": "All P1 tickets closed or deferred", "status": "blocked", "note": "DEL-1123 still in review"},
+      {"item": "CI green on release branch", "status": "pending", "note": "run-88214 failing on checkout-api"},
+      {"item": "Migrations reviewed by a DBA", "status": "done", "note": "0042_widen_fx_precision signed off by dvarga"},
+      {"item": "Breaking changes announced 7 days ahead", "status": "done", "note": "v1 webhook removal announced 2026-11-06"},
+      {"item": "Rollback plan documented", "status": "pending", "note": null},
+      {"item": "No open SEV1/SEV2 incidents", "status": "blocked", "note": "INC-204 open"}
+    ]
+  }
+}
